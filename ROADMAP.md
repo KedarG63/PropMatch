@@ -1,7 +1,7 @@
 # PropMatch Mobile — Roadmap
 
 > Last updated: 2026-04-26
-> Current status: Phase 1 complete — Firebase Auth live (email/password, session persistence)
+> Current status: Phase 2 complete — full Firestore data layer live (visits, listings, requirements, connections, chat)
 
 ---
 
@@ -11,8 +11,8 @@
 |---|---|---|
 | 0 | UI Shell (all screens, design system) | ✅ Done |
 | 1 | Firebase Auth + real user accounts | ✅ Done |
-| 2 | Firestore data layer (listings, requirements, visits, connections, chat) | 🔄 In Progress |
-| 3 | Matching engine (Node.js backend + PostgreSQL) | After Phase 2 |
+| 2 | Firestore data layer (listings, requirements, visits, connections, chat) | ✅ Done |
+| 3 | Matching engine (Node.js backend + PostgreSQL) | 🔄 Next |
 | 4 | Push notifications (FCM) | After Phase 3 |
 | 5 | Media (photos, video) via GCS | After Phase 4 |
 | 6 | Anti-spam enforcement (mute, rate limit, verification) | After Phase 5 |
@@ -33,40 +33,51 @@
 
 ---
 
-## Phase 2 — Firestore Data Layer 🔄
+## Phase 2 — Firestore Data Layer ✅ DONE
 
-**Goal:** Replace all mock data with real Firestore reads/writes. By end of this phase the app is fully functional without any hardcoded data.
+**Delivered:**
+- All mock/hardcoded data replaced with live Firestore reads/writes
+- `visitsService.ts` — buyer visited property log (add, subscribe, update status/notes/pros-cons)
+- `requirementsService.ts` — buyer posts requirement; old requirement deactivated on new post
+- `listingsService.ts` — broker posts listing; broker dashboard subscribes; paginated discover feed
+- `connectionsService.ts` — buyer sends connection request; broker accepts/rejects; stores buyer+broker names
+- `chatService.ts` — real-time chat thread via `onSnapshot`; `sendTextMessage` writes to Firestore subcollection
+- All screens now accept and use `appUser: AppUser` prop (uid threaded through every write)
+- `ChatsListScreen` shows pending/accepted connections with broker accept/decline inline
+- `ChatScreen` subscribes to live thread when `connId` present, empty state for new connections
+- Composite index issue fixed: removed compound `where()+orderBy()` queries; sort/filter client-side
 
-### Firestore collections
-
+### Firestore collection structure
 ```
 users/{uid}
   name, email, role, verified, fcmToken, createdAt
 
-requirements/{reqId}                  ← Buyer posts
+requirements/{reqId}
   uid, bhk[], budgetMin, budgetMax, localities[], strict,
   possession, propertyTypes[], notes, verifiedOnly, createdAt, active
 
-listings/{listingId}                  ← Broker posts
-  uid (broker), title, price, area, rera, floor, facing,
-  tone, idx, photos[], videoUrl, status, views, createdAt
+listings/{listingId}
+  uid (broker), brokerName, brokerFirm, title, price, area, rera,
+  floor, facing, photos[], videoUrl, status, views, createdAt
 
-visits/{visitId}                      ← Buyer's visited log
-  uid (buyer), title, broker, agent,
+visits/{visitId}
+  uid (buyer), title, price, broker, agent,
   pros[], cons[], notes, status, visitedAt
 
-connections/{connId}                  ← Buyer ↔ Broker link
-  buyerUid, brokerUid, listingId, requirementId,
+connections/{connId}
+  buyerUid, buyerName, brokerUid, brokerName,
+  listingId, listingTitle, listingPrice,
   message, status (pending/accepted/rejected), createdAt
 
-messages/{connId}/thread/{msgId}      ← Chat under a connection
-  senderUid, text, cardRef (listingId), sentAt, read
+connections/{connId}/thread/{msgId}
+  senderUid, text, cardRef, sentAt, read
 
 mutes/{buyerUid}/brokers/{brokerUid}
   mutedAt
 ```
 
-### Firestore security rules (set before any writes)
+### Firestore security rules
+Set these in Firebase Console → Firestore → Rules before deploying to production:
 ```
 rules_version = '2';
 service cloud.firestore {
@@ -104,88 +115,89 @@ service cloud.firestore {
 }
 ```
 
-### Tasks
-
-#### 2.1 — Visited Properties (Buyer — My Properties) ← Start here
-- `visitsService.ts`: `addVisit`, `getVisits(uid)`, `updateVisitStatus`, `updateVisitNotes`
-- `MyPropertiesScreen`: replace mock data with `onSnapshot` listener on `visits` where `uid == me`
-- FAB "Add property visited" → bottom sheet form (title, broker, pros/cons, notes)
-- Status toggle + notes edit → Firestore update
-
-#### 2.2 — Post Requirement (Buyer)
-- `requirementsService.ts`: `postRequirement`, `getMyRequirement(uid)`
-- `PostRequirementScreen`: on submit, write to `requirements/{newId}`
-- Show active requirement card at top of `MyPropertiesScreen`
-- Deactivate old requirement when new one is posted (`active: false`)
-
-#### 2.3 — Post Listing (Broker)
-- `listingsService.ts`: `postListing`, `getBrokerListings(uid)`, `updateListingStatus`
-- `PostListingScreen`: on submit, write to `listings/{newId}`
-- `BrokerDashboardScreen` listings carousel: read real listings for current broker
-
-#### 2.4 — Discover Feed (Buyer)
-- `DiscoverScreen`: read `listings` ordered by `createdAt desc` (paginated, 10 at a time)
-- Filter chips → Firestore query constraints (bhk array-contains, price range)
-- Real broker name + verified status pulled from `users/{brokerUid}`
-
-#### 2.5 — Connections
-- `connectionsService.ts`: `sendConnectionRequest`, `getPendingConnections(brokerUid)`, `respondToConnection`
-- ConnectSheet: on "Send Request" → write `connections/{newId}` with `status: pending`
-- Broker Dashboard Pending tab: real list from Firestore
-- Accept/Reject → update `status` field
-
-#### 2.6 — Chat (real-time)
-- `chatService.ts`: `sendMessage`, `subscribeToThread(connId, callback)`
-- `ChatScreen`: `onSnapshot` for real-time messages
-- `ChatsListScreen`: read all connections for current user + last message preview
-
 ---
 
-## Phase 3 — Matching Engine (Backend)
+## Phase 3 — Matching Engine (Backend) 🔄 NEXT
 
-**Goal:** Brokers see buyers ranked by match score; buyers see relevant listings first.
+**Goal:** Buyers see listings ranked by how well they match their requirement. Brokers see buyers ranked by match score. Currently the Discover feed shows all Active listings in chronological order — Phase 3 replaces this with scored, ranked results.
 
 ### Architecture
 
 ```
-Node.js + Express API (Cloud Run or App Engine)
-  ↓
-PostgreSQL (Cloud SQL) — stores denormalized match scores
-  ↑
-Firestore triggers → Cloud Functions → compute score → write to PostgreSQL
+Mobile App (React Native)
+    │
+    ▼ REST calls
+Node.js + Express API  ←  Firebase Admin SDK
+    │                         │
+    ▼                         ▼
+PostgreSQL (Cloud SQL)   Firestore (source of truth)
+  matches table            requirements, listings
+    ▲
+    │ writes
+Cloud Functions (Firestore triggers)
+  on requirements write → compute scores for all active listings
+  on listings write     → compute scores for all active requirements
 ```
 
-### Matching logic
+### Match scoring logic
 
-**Buyer requirement → Listing score:**
-- BHK overlap: +30 pts if listing BHK in buyer's BHK list
-- Budget overlap: +25 pts if listing price within buyer's budget range
-- Locality overlap: +20 pts if listing locality in buyer's list; 0 if buyer `strict=true` and no match
-- Possession match: +15 pts
-- Property type match: +10 pts
+**Buyer requirement vs Listing:**
 
-**API endpoints:**
+| Signal | Points | Notes |
+|---|---|---|
+| BHK match | +30 | Listing BHK in buyer's selected BHK list |
+| Budget match | +25 | Listing price within buyer's budgetMin–budgetMax |
+| Locality match | +20 | Listing area in buyer's localities list |
+| Locality strict block | −100 | If buyer `strict=true` and no locality match → score = 0 |
+| Possession match | +15 | Ready-to-move vs under-construction matches |
+| Property type match | +10 | Flat/Villa/Row House etc. |
+
+Scores capped at 100. Listings below 40 not shown.
+
+### PostgreSQL schema
+
+```sql
+CREATE TABLE matches (
+  id           SERIAL PRIMARY KEY,
+  buyer_uid    TEXT NOT NULL,
+  listing_id   TEXT NOT NULL,
+  score        INTEGER NOT NULL,
+  computed_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (buyer_uid, listing_id)
+);
+
+CREATE INDEX ON matches (buyer_uid, score DESC);
+CREATE INDEX ON matches (listing_id, score DESC);
 ```
-GET /matches/buyer/:uid        → ranked listings for buyer
-GET /matches/broker/:uid       → ranked requirements for broker's listings
-POST /verify/broker            → broker verification request
+
+### API endpoints
+
+```
+GET  /matches/buyer/:uid          → ranked listings for buyer (with listing fields)
+GET  /matches/broker/:uid         → ranked requirements for broker's listings
+POST /verify/broker               → broker RERA verification request (Phase 6)
 ```
 
 ### Tasks
 
-#### 3.1 Backend scaffold
-- Node.js + Express + TypeScript project in `/backend`
-- Cloud SQL (PostgreSQL) setup with schema migrations
-- Docker + Cloud Run deployment config
+#### 3.1 — Backend scaffold
+- [ ] Create `/backend` directory: Node.js + Express + TypeScript
+- [ ] Connect to Cloud SQL (PostgreSQL) via `pg` or `drizzle-orm`
+- [ ] Run schema migrations (matches table)
+- [ ] Deploy to Cloud Run (Dockerfile + `gcloud run deploy`)
+- [ ] Add Firebase Admin SDK for auth token verification on API routes
 
-#### 3.2 Match score Cloud Function
-- Firestore trigger on `requirements` write → compute buyer↔listing scores
-- Firestore trigger on `listings` write → compute listing↔requirement scores
-- Write scores to PostgreSQL `matches` table
+#### 3.2 — Match score Cloud Function
+- [ ] Firestore trigger: `onDocumentWritten('requirements/{reqId}')` → fetch all active listings → compute scores → upsert to PostgreSQL
+- [ ] Firestore trigger: `onDocumentWritten('listings/{listingId}')` → fetch all active requirements → compute scores → upsert to PostgreSQL
+- [ ] Score computation in shared `matchScore(requirement, listing): number` utility
+- [ ] Deploy Cloud Functions from `/functions` directory
 
-#### 3.3 Wire to mobile
-- `DiscoverScreen`: call `/matches/buyer/:uid` instead of raw Firestore query
-- `BrokerDashboardScreen` Matched tab: call `/matches/broker/:uid`
+#### 3.3 — Wire to mobile
+- [ ] `DiscoverScreen`: replace `getDiscoverListings()` Firestore query with `GET /matches/buyer/:uid`
+- [ ] `BrokerDashboardScreen` Matched tab: replace mock `MATCHED_BUYERS` with `GET /matches/broker/:uid`
+- [ ] Add auth header to API calls (Firebase ID token via `getIdToken()`)
+- [ ] Loading + empty states already in place — just swap the data source
 
 ---
 
@@ -201,7 +213,6 @@ POST /verify/broker            → broker verification request
 | Connection accepted | Buyer | "[Broker] accepted your request" |
 | New chat message | Both | "[Name]: [preview]" |
 | New listing matching requirement | Buyer | "New 3 BHK in Baner matches your requirement" |
-| New buyer requirement matching listing | Broker | "New buyer looking for your listing type" |
 
 ### Tasks
 
@@ -212,7 +223,7 @@ POST /verify/broker            → broker verification request
 #### 4.2 Cloud Functions notification triggers
 - On `connections` write (new pending): notify broker
 - On `connections` update (accepted): notify buyer
-- On `messages` write: notify other party (respect mute records)
+- On `thread` write: notify other party (respect mute records)
 - On match score above threshold: notify buyer/broker
 
 #### 4.3 Mobile foreground handling
@@ -252,21 +263,20 @@ POST /verify/broker            → broker verification request
 
 #### 6.1 Mute enforcement
 - Mute UI already exists in `ChatScreen` (buyer-side)
-- Backend: when sending a message, check `mutes/{buyerUid}/brokers/{brokerUid}` — reject if muted
+- Backend: check `mutes/{buyerUid}/brokers/{brokerUid}` before allowing message send
 - Cloud Function: on mute write, revoke broker's ability to send via messaging rules
 
 #### 6.2 Verified broker badge
-- Manual verification flow: broker submits RERA number + ID
+- Manual verification: broker submits RERA number + ID
 - Admin Cloud Function or manual Firestore write flips `users/{uid}.verified = true`
-- `DiscoverScreen` "Verified only" filter → query `listings` joined on verified brokers
+- `DiscoverScreen` "Verified only" filter wired to real `verified` flag
 - `PostRequirementScreen` "Verified brokers only" toggle persists to requirement doc
 
 #### 6.3 Rate limiting
-- Cloud Function: count messages from broker to buyer in last 24h
-- Block if > threshold (e.g., 10 messages/day to unconnected buyer)
+- Cloud Function: count messages from broker to buyer in last 24h; block above threshold
 
 #### 6.4 Connection-gated messaging
-- Enforce at Firestore security rules: can only write to `messages/{connId}/thread` if a matching `connections` doc exists with `status: accepted`
+- Enforce at security rules: can only write to `thread` if `connections` doc with `status: accepted` exists
 
 ---
 
@@ -280,7 +290,7 @@ POST /verify/broker            → broker verification request
 - Profile photo step
 - "Post your first requirement" nudge for buyers after sign-up
 
-#### 7.2 Empty states
+#### 7.2 Empty states (already partially done — verify all screens)
 - `MyPropertiesScreen`: "You haven't visited any properties yet."
 - `DiscoverScreen`: "No listings match your requirement yet."
 - `ChatsListScreen`: "No conversations yet."

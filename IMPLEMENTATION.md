@@ -1,7 +1,7 @@
 # PropMatch Mobile — Implementation Log
 
 > Last updated: 2026-04-26
-> Status: Phase 1 complete — Firebase Auth live, running on Expo Go (SDK 55)
+> Status: Phase 2 complete — full Firestore data layer live, all mock data removed
 
 ---
 
@@ -16,8 +16,10 @@
 | Fonts | @expo-google-fonts (Playfair Display, DM Sans, DM Mono) | ^0.4.2 |
 | Navigation | Manual tab state machine in App.tsx | — |
 | Auth | Firebase Auth (email/password via Firebase JS SDK) | ^12.12.1 |
-| Database | Firebase Firestore (wired in Phase 2) | ^12.12.1 |
+| Database | Firestore (live — all screens wired) | ^12.12.1 |
 | Session persistence | @react-native-async-storage/async-storage | ~2.1.2 |
+| Backend (planned) | Node.js + Express on Cloud Run | — |
+| Database (planned) | PostgreSQL on Cloud SQL (match scores) | — |
 | Storage (planned) | Google Cloud Storage | — |
 | Push notifications (planned) | Firebase Cloud Messaging | — |
 | Repo | https://github.com/KedarG63/PropMatch | branch: master |
@@ -69,7 +71,7 @@ Three levels (sm / md / lg) defined as `shadowColor`, `shadowOffset`, `shadowOpa
 
 ```
 propmatch-mobile/
-├── App.tsx                          ← root shell, font loading, auth state machine
+├── App.tsx                          ← root shell, font loading, auth state machine, screen router
 ├── index.ts                         ← Expo entry
 ├── app.json                         ← Expo config (name, slug, SDK)
 ├── package.json
@@ -80,7 +82,12 @@ propmatch-mobile/
 │   ├── types/index.ts               ← All TypeScript interfaces + AppUser
 │   ├── services/
 │   │   ├── firebase.ts              ← Firebase init, auth, Firestore, UID persistence helpers
-│   │   └── userService.ts           ← createUserDoc / getUserDoc (users/{uid})
+│   │   ├── userService.ts           ← createUserDoc / getUserDoc (users/{uid})
+│   │   ├── visitsService.ts         ← addVisit, subscribeVisits, updateVisitStatus/Notes/ProsCons
+│   │   ├── requirementsService.ts   ← postRequirement, getActiveRequirement
+│   │   ├── listingsService.ts       ← postListing, subscribeBrokerListings, getDiscoverListings
+│   │   ├── connectionsService.ts    ← sendConnectionRequest, subscribeBuyer/BrokerConnections, respondToConnection
+│   │   └── chatService.ts           ← subscribeChatThread, sendTextMessage
 │   ├── components/
 │   │   ├── PropertyPhoto.tsx        ← Gradient building placeholder
 │   │   ├── Tags.tsx                 ← ProTag / ConTag pills
@@ -89,22 +96,22 @@ propmatch-mobile/
 │   │   ├── BottomNav.tsx            ← Tab bar with raised + button
 │   │   ├── BottomSheet.tsx          ← Modal slide-up sheet
 │   │   ├── Toast.tsx                ← Animated auto-hide toast
-│   │   └── ConnectSheet.tsx         ← Connection request sheet content
+│   │   └── ConnectSheet.tsx         ← Connection request sheet (async onSend → Firestore)
 │   └── screens/
 │       ├── auth/
-│       │   ├── WelcomeScreen.tsx    ← Landing: hero + Get Started / Sign In
-│       │   ├── SignUpScreen.tsx     ← 2-step: role picker → name/email/password
-│       │   └── LoginScreen.tsx      ← Email + password + forgot password
+│       │   ├── WelcomeScreen.tsx
+│       │   ├── SignUpScreen.tsx
+│       │   └── LoginScreen.tsx
 │       ├── buyer/
-│       │   ├── MyPropertiesScreen.tsx
-│       │   ├── PostRequirementScreen.tsx
-│       │   └── DiscoverScreen.tsx
+│       │   ├── MyPropertiesScreen.tsx   ← live Firestore visits
+│       │   ├── PostRequirementScreen.tsx ← writes to requirements
+│       │   └── DiscoverScreen.tsx        ← paginated listings feed
 │       ├── broker/
-│       │   ├── BrokerDashboardScreen.tsx
-│       │   └── PostListingScreen.tsx
+│       │   ├── BrokerDashboardScreen.tsx ← live broker listings
+│       │   └── PostListingScreen.tsx     ← writes to listings
 │       └── shared/
-│           ├── ChatScreen.tsx
-│           ├── ChatsListScreen.tsx
+│           ├── ChatScreen.tsx            ← real-time Firestore thread
+│           ├── ChatsListScreen.tsx       ← connections with accept/decline
 │           └── ProfileScreen.tsx
 └── claude_design/                   ← Reference HTML/JSX from claude.ai/design
 ```
@@ -120,10 +127,10 @@ propmatch-mobile/
 | `PropertyStatus` | `'shortlisted' \| 'undecided' \| 'rejected'` |
 | `PropertyTone` | `'a' \| 'b' \| 'c' \| 'd' \| 'e'` — controls gradient color scheme |
 | `VisitedProperty` | Full buyer property record (id, title, price, tone, photos, pros, cons, notes, status, broker) |
-| `Listing` | Discover feed listing (badge, title, price, broker, verified, rera, dropFrom) |
+| `Listing` | Discover feed listing — includes `uid` (broker's Firebase UID) for connection requests |
 | `BrokerListing` | Broker's own listing (status: Active/Paused/Sold, views) |
 | `MatchedBuyer` | Buyer matched to broker's listing (anon name, bhk, budget, locs, match %) |
-| `ChatThread` | `{ name, who }` — minimal thread ref |
+| `ChatThread` | `{ name, who, connId? }` — `connId` is the Firestore connections doc ID for real-time chat |
 | `ChatMessage` | Message with optional text or property card embed |
 
 ---
@@ -133,12 +140,36 @@ propmatch-mobile/
 ### `firebase.ts`
 - Initialises Firebase app (reads `EXPO_PUBLIC_FIREBASE_*` from `.env`)
 - Exports `auth` (Firebase Auth with `inMemoryPersistence`) and `db` (Firestore)
-- Firebase 12 removed `getReactNativePersistence` — workaround: UID is stored in AsyncStorage (`@propmatch/uid`) and restored on cold start by `App.tsx`
+- Firebase 12 removed `getReactNativePersistence` — workaround: UID stored in AsyncStorage (`@propmatch/uid`) and restored on cold start
 - Exports `saveUid`, `loadStoredUid`, `clearStoredUid` helpers
 
 ### `userService.ts`
-- `createUserDoc(uid, { name, email, role })` — writes `users/{uid}` to Firestore on sign-up
-- `getUserDoc(uid)` → `AppUser | null` — reads user doc, maps Firestore timestamp to ISO string
+- `createUserDoc(uid, { name, email, role })` — writes `users/{uid}` on sign-up
+- `getUserDoc(uid)` → `AppUser | null`
+
+### `visitsService.ts`
+- `addVisit(uid, { title, price, broker, agent })` — creates visit doc
+- `subscribeVisits(uid, callback)` — onSnapshot, sorted by `visitedAt` desc client-side
+- `updateVisitStatus(id, status)` / `updateVisitNotes(id, notes)` / `updateVisitProsCons(id, pros, cons)`
+
+### `requirementsService.ts`
+- `postRequirement(uid, data)` — deactivates previous requirement, writes new one
+- `getActiveRequirement(uid)` → `Requirement | null`
+
+### `listingsService.ts`
+- `postListing(uid, data)` → doc ID
+- `subscribeBrokerListings(uid, callback)` — onSnapshot for broker's own listings
+- `getDiscoverListings(pageSize, after?)` — paginated query ordered by `createdAt desc`, active filter client-side
+
+### `connectionsService.ts`
+- `sendConnectionRequest({ buyerUid, buyerName, brokerUid, brokerName, listingId, listingTitle, listingPrice, message })` → connId
+- `subscribeBuyerConnections(buyerUid, callback)` — all connections for buyer, sorted by `createdAt` desc
+- `subscribeBrokerConnections(brokerUid, status|'all', callback)` — broker's connections, status filtered client-side
+- `respondToConnection(id, 'accepted'|'rejected')` — updates `status` field
+
+### `chatService.ts`
+- `subscribeChatThread(connId, myUid, callback)` — onSnapshot on `connections/{connId}/thread`, ordered by `sentAt`
+- `sendTextMessage(connId, senderUid, text)` — writes to thread subcollection
 
 ---
 
@@ -152,118 +183,39 @@ propmatch-mobile/
 
 ---
 
-## Components
+## Screen Routing (`App.tsx`)
 
-### `PropertyPhoto`
-- Renders gradient architectural building placeholder (no real images needed at this stage)
-- `tone` prop (`'a'–'e'`) controls sky/building color scheme
-- `idx` prop (0–2) controls building silhouette layout variant
-- Layers: sky gradient → building blocks → ground strip → bottom vignette
-- Accepts `height`, `label`, `video` props
+All authenticated screens receive `appUser: AppUser`. Role-based routing:
 
-### `ProTag` / `ConTag` (Tags.tsx)
-- Pill labels for property pros (sage green `#DDE6D0`) and cons (clay red `#F0D9D2`)
-- DM Mono font, uppercase, 10px
+**Buyer tabs:** `home` (MyProperties) → `discover` (Discover) → `post` (PostRequirement) → `chats` (ChatsList / ChatScreen) → `profile`
 
-### `EditorialHeader`
-- DM Mono kicker (uppercase, rust or muted color, letter-spaced)
-- Playfair Display serif title
-- Optional numeric count badge
-- Optional right-side slot (ReactNode)
+**Broker tabs:** `broker` (BrokerDashboard) → `post` (PostListing) → `chats` (ChatsList / ChatScreen) → `profile`
 
-### `ChipRow`
-- Horizontal `ScrollView` of filter chips (no scroll indicator)
-- Active chip: ink background + cream text
-- Inactive chip: transparent + line2 border + ink3 text
-
-### `BottomNav`
-- 5-tab bar: Home, Discover/Matched, **+** (center, raised), Chats, Profile
-- Center `+` button: rust background, `translateY: -6`, circular
-- Active tab: rust bar above icon, rust icon color
-- Unread badge support (red dot with count)
-- Role-aware: buyer tabs differ from broker tabs
-
-### `BottomSheet`
-- React Native `Modal` with `animationType="slide"`
-- Backdrop tap-to-close
-- Handle bar (36×4 rounded pill)
-- `borderTopLeftRadius/TopRightRadius: 24`
-
-### `Toast`
-- Positioned absolutely at bottom center
-- `Animated.Value` for opacity + `translateY`
-- Auto-dismisses after 2.5s
-- Paper background, ink text, DM Mono font
-
-### `ConnectSheet`
-- Content rendered inside `BottomSheet` when connecting to a broker
-- Property preview strip (photo thumbnail + title + price)
-- 240-character `TextInput` for intro message
-- Privacy note (buyer name not revealed until both connect)
-- "Send Request" rust CTA button
+`ConnectSheet` wired in App.tsx: `onSend(message)` calls `sendConnectionRequest(...)` then dismisses sheet and shows toast.
 
 ---
 
-## Screens
+## Components
 
-### Auth Screens
+### `PropertyPhoto`
+- Gradient architectural building placeholder (no real images in Phase 2)
+- `tone` (`'a'–'e'`): sky/building color; `idx` (0–2): silhouette layout
+- `toneFromId` / `idxFromId` hash functions in service files ensure same doc ID → same gradient always
 
-#### `WelcomeScreen`
-- Full-bleed `PropertyPhoto` hero (300px, tone c, idx 1) with dark gradient overlay
-- "PropMatch · Pune" mono kicker on hero
-- "Find your home. On your terms." serif heading
-- Body copy + Verified Brokers / No Spam / Pune Market pill row
-- "Get Started" rust CTA → SignUpScreen
-- "I already have an account" link → LoginScreen
+### `ConnectSheet`
+- `onSend: (message: string) => Promise<void>` — async, shows `ActivityIndicator` while in flight
+- Property preview strip, 240-char textarea, privacy note
 
-#### `SignUpScreen`
-- **Step 1 — Role picker**: same editorial card design as original OnboardingScreen; Continue button disabled until role selected
-- **Step 2 — Profile**: Full Name, Email, Password inputs + role badge + "Create Account" button
-- `createUserWithEmailAndPassword` → `createUserDoc` on success
-- Error handling with `Alert` for weak password, invalid email, Firebase errors
+### `ChatsListScreen`
+- Accepts/Pending split sections
+- Broker: inline Accept / Decline buttons call `respondToConnection`
+- Buyer: pending shows waiting state, accepted shows "Active" chip with tap-to-open
 
-#### `LoginScreen`
-- "Sign in to PropMatch" serif heading
-- Email + Password inputs
-- "Forgot?" link → `sendPasswordResetEmail` (fires only if email field is filled)
-- "Sign In" rust CTA → `signInWithEmailAndPassword`
-- Friendly error messages for `auth/invalid-credential`
-
-### `MyPropertiesScreen` (buyer — Home tab)
-- `EditorialHeader`: "My Visited Properties" + count
-- `ChipRow`: All / Shortlisted / Undecided / Rejected filters
-- Property cards with: `PropertyPhoto` (180px), status badge, pros/cons tags, collapsible notes, 3-way status toggle, Chat button
-- Floating `+` FAB ("Add property visited") — *mock data, Phase 2 wires Firestore*
-
-### `PostRequirementScreen` (buyer — + tab)
-- BHK multi-select, budget stepper (min/max ₹ lakhs), locality chips, strict toggle, possession segmented control, property type grid, notes, verified-only toggle
-- "Post Requirement" CTA — *mock submit, Phase 2 writes to Firestore*
-
-### `DiscoverScreen` (buyer — Discover tab)
-- Listing cards with NEW/PRICE DROP badges, save button, broker strip, "Send connection request" → ConnectSheet
-- *Mock data, Phase 2 reads from Firestore listings*
-
-### `BrokerDashboardScreen` (broker — Home tab)
-- KPI strip, listings carousel, matched buyers with 3 sub-tabs (Matched/Connections/Pending)
-- *Mock data, Phase 2 wires Firestore*
-
-### `PostListingScreen` (broker — + tab)
-- Photo upload zone (dashed), Title/Price/Area/RERA/Floor/Facing fields
-- *Mock submit, Phase 2 writes to Firestore*
-
-### `ChatScreen` (shared)
-- `KeyboardAvoidingView`, anti-spam mute banner (buyer-only), message bubbles, property card messages, attach panel
-- *Mock messages, Phase 2 wires Firestore real-time listener*
-
-### `ChatsListScreen` (shared — Chats tab)
-- Thread list with unread badge, verified tick, property context line
-- *Mock data, Phase 2 reads from connections + messages*
-
-### `ProfileScreen` (shared — Profile tab)
-- Profile card with real name/email/initials from `AppUser`
-- Menu items (Privacy, Credentials, Notifications, Help)
-- Demo role switcher (dev only)
-- **Sign Out** button → `signOut(auth)` + `clearStoredUid()` → WelcomeScreen
+### `ChatScreen`
+- If `thread.connId` present: subscribes to real Firestore thread
+- `send()` calls `sendTextMessage` when connId present
+- `ScrollView` auto-scrolls to bottom on new messages
+- Empty state for new connections ("Say hello!")
 
 ---
 
@@ -271,8 +223,17 @@ propmatch-mobile/
 
 - **Project ID:** `propmatch-mobile`
 - **Auth:** Email/Password enabled
-- **Firestore:** Enabled, `asia-south1` region, test mode rules
+- **Firestore:** Enabled, `asia-south1` region
+- **Rules:** Currently in test mode — set production rules from ROADMAP.md before launch
 - **Config:** stored in `.env` as `EXPO_PUBLIC_*` variables
+
+---
+
+## Known Firestore Notes
+
+- **No composite indexes created** — all compound `where()+orderBy()` queries removed; sorting/filtering done client-side. This is fine for current data volume. Phase 3 backend handles ranking via PostgreSQL anyway.
+- **Firestore offline cache** — enabled by default in JS SDK; app works on intermittent connections
+- **Realtime listeners** — all `onSnapshot` subscriptions return `Unsubscribe` and are cleaned up in `useEffect` return
 
 ---
 
@@ -282,3 +243,5 @@ propmatch-mobile/
 2. `feat: implement all screens from claude_design/ reference files`
 3. `chore: upgrade Expo SDK 54 → 55 for Expo Go compatibility`
 4. `feat: Phase 1 — Firebase Auth (email/password, session persistence)`
+5. `feat: Phase 2 — replace all mock data with live Firestore`
+6. `fix: remove composite index queries to avoid Firestore index errors`
