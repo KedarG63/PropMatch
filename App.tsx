@@ -190,7 +190,7 @@ export default function App() {
     } else if (tab === 'home') {
       screen = <MyPropertiesScreen openChat={openChat} appUser={appUser} />;
     } else if (tab === 'discover') {
-      screen = <DiscoverScreen openConnect={(l) => setConnectSheet(l)} />;
+      screen = <DiscoverScreen openConnect={(l) => setConnectSheet(l)} appUser={appUser} />;
     } else if (tab === 'post') {
       screen = (
         <PostRequirementScreen

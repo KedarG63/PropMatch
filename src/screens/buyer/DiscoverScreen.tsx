@@ -7,13 +7,17 @@ import EditorialHeader from '../../components/EditorialHeader';
 import ChipRow from '../../components/ChipRow';
 import PropertyPhoto from '../../components/PropertyPhoto';
 import { getDiscoverListings } from '../../services/listingsService';
-import type { Listing } from '../../types';
+import { fetchRankedListings } from '../../services/apiService';
+import type { Listing, AppUser } from '../../types';
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 
 interface Props {
   openConnect: (listing: Listing) => void;
+  appUser?: AppUser;
 }
 
-export default function DiscoverScreen({ openConnect }: Props) {
+export default function DiscoverScreen({ openConnect, appUser }: Props) {
   const [sort, setSort] = useState('budget');
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [listings, setListings] = useState<Listing[]>([]);
@@ -21,21 +25,34 @@ export default function DiscoverScreen({ openConnect }: Props) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [lastDoc, setLastDoc] = useState<Parameters<typeof getDiscoverListings>[1]>(undefined);
   const [hasMore, setHasMore] = useState(true);
+  const [ranked, setRanked] = useState(false);
 
   const loadListings = useCallback(async () => {
     setLoading(true);
     try {
+      // Use backend ranked results when API URL + appUser are available
+      if (API_URL && appUser) {
+        const results = await fetchRankedListings(appUser.uid);
+        if (results) {
+          setListings(results);
+          setHasMore(false);
+          setRanked(true);
+          return;
+        }
+      }
+      // Fall back to chronological Firestore feed
       const result = await getDiscoverListings(10);
       setListings(result.listings);
       setLastDoc(result.lastDoc ?? undefined);
       setHasMore(result.lastDoc !== null);
+      setRanked(false);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [appUser]);
 
   const loadMore = useCallback(async () => {
-    if (!hasMore || loadingMore) return;
+    if (!hasMore || loadingMore || ranked) return;
     setLoadingMore(true);
     try {
       const result = await getDiscoverListings(10, lastDoc);
@@ -45,7 +62,7 @@ export default function DiscoverScreen({ openConnect }: Props) {
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, lastDoc, loadingMore]);
+  }, [hasMore, lastDoc, loadingMore, ranked]);
 
   useEffect(() => { loadListings(); }, [loadListings]);
 
@@ -54,7 +71,7 @@ export default function DiscoverScreen({ openConnect }: Props) {
   return (
     <View style={styles.container}>
       <EditorialHeader
-        kicker="Discover · Curated for you"
+        kicker={ranked ? 'Discover · Matched for you' : 'Discover · Curated for you'}
         title="Browse Properties"
         right={
           <View style={styles.headerRight}>
@@ -100,8 +117,14 @@ export default function DiscoverScreen({ openConnect }: Props) {
             {/* Photo zone */}
             <View style={styles.photoContainer}>
               <PropertyPhoto tone={l.tone} idx={l.idx} height={210} video={l.video} />
-              {/* Badge */}
-              {l.badge && (
+              {/* Match score badge (ranked mode) */}
+              {l.score != null && l.score > 0 && (
+                <View style={[styles.badge, { backgroundColor: Colors.sage }]}>
+                  <Text style={styles.badgeText}>{l.score}% MATCH</Text>
+                </View>
+              )}
+              {/* Status badge */}
+              {l.badge && !l.score && (
                 <View style={[
                   styles.badge,
                   { backgroundColor: l.badge === 'NEW' ? Colors.ink : Colors.rust },

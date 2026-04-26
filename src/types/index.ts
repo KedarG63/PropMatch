@@ -45,6 +45,8 @@ export interface Listing {
   verified: boolean;
   rera: string | null;
   dropFrom?: string;
+  bhk?: string;         // '1 BHK' | '2 BHK' | '3 BHK' | '4 BHK' | '4+ BHK'
+  score?: number;       // match score 0–100 from backend (present in ranked mode)
 }
 
 export interface BrokerListing {

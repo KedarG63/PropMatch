@@ -26,6 +26,7 @@ export interface NewListing {
   title: string;
   price: string;
   area: string;
+  bhk: string;
   rera: string;
   floor: string;
   facing: string;
@@ -98,6 +99,7 @@ export async function getDiscoverListings(
         firm: String(data.brokerFirm ?? ''),
         verified: false,
         rera: data.rera ? String(data.rera) : null,
+        bhk: data.bhk ? String(data.bhk) : undefined,
       };
     });
 

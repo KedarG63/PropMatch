@@ -1,30 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet,
+  View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Shadow } from '../../theme';
 import EditorialHeader from '../../components/EditorialHeader';
 import PropertyPhoto from '../../components/PropertyPhoto';
 import { subscribeBrokerListings } from '../../services/listingsService';
+import { fetchMatchedBuyers } from '../../services/apiService';
 import type { BrokerListing, MatchedBuyer, AppUser } from '../../types';
-
-const MATCHED_BUYERS: MatchedBuyer[] = [
-  {
-    id: 'm47', anon: 'Buyer #47', name: 'Ananya G.', revealed: false,
-    bhk: '3 BHK', budget: '₹1.2 – 1.5 Cr', loc: ['Aundh', 'Baner'],
-    possession: 'Ready to Move', strict: true, postedAt: '2h ago', match: 96,
-  },
-  {
-    id: 'm51', anon: 'Buyer #51', name: 'Karan M.', revealed: false,
-    bhk: '2 BHK', budget: '₹85 L – 1.1 Cr', loc: ['Baner', 'Pashan'],
-    possession: '≤ 6 mo', strict: false, postedAt: '5h ago', match: 88,
-  },
-  {
-    id: 'm58', anon: 'Buyer #58', name: 'Rhea & Vikram', revealed: false,
-    bhk: '3/4 BHK', budget: '₹1.5 – 2.2 Cr', loc: ['Koregaon Park', 'Kalyani Nagar'],
-    possession: 'Ready to Move', strict: true, postedAt: '1d ago', match: 82,
-  },
-];
 
 interface Props {
   onConnectBuyer: () => void;
@@ -34,10 +17,21 @@ interface Props {
 export default function BrokerDashboardScreen({ onConnectBuyer, appUser }: Props) {
   const [activeTab, setActiveTab] = useState<'matched' | 'connections' | 'pending'>('matched');
   const [listings, setListings] = useState<BrokerListing[]>([]);
+  const [matchedBuyers, setMatchedBuyers] = useState<MatchedBuyer[]>([]);
+  const [matchLoading, setMatchLoading] = useState(false);
 
   useEffect(() => {
     const unsub = subscribeBrokerListings(appUser.uid, setListings);
     return unsub;
+  }, [appUser.uid]);
+
+  useEffect(() => {
+    const apiUrl = process.env.EXPO_PUBLIC_API_URL ?? '';
+    if (!apiUrl) return;
+    setMatchLoading(true);
+    fetchMatchedBuyers(appUser.uid)
+      .then(buyers => { if (buyers) setMatchedBuyers(buyers); })
+      .finally(() => setMatchLoading(false));
   }, [appUser.uid]);
   const [requests, setRequests] = useState<Record<string, { sent: boolean; msg: string }>>({});
   const [drafting, setDrafting] = useState<string | null>(null);
@@ -178,7 +172,25 @@ export default function BrokerDashboardScreen({ onConnectBuyer, appUser }: Props
 
         {/* Tab content */}
         <View style={styles.tabContent}>
-          {activeTab === 'matched' && MATCHED_BUYERS.map((b, i) => {
+          {activeTab === 'matched' && matchLoading && (
+            <View style={{ padding: 32, alignItems: 'center' }}>
+              <ActivityIndicator color={Colors.rust} />
+              <Text style={{ fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted, marginTop: 10, letterSpacing: 1.5 }}>
+                COMPUTING MATCHES…
+              </Text>
+            </View>
+          )}
+          {activeTab === 'matched' && !matchLoading && matchedBuyers.length === 0 && (
+            <View style={styles.emptyMatched}>
+              <Text style={styles.emptyMatchedTitle}>No matches yet</Text>
+              <Text style={styles.emptyMatchedSub}>
+                {process.env.EXPO_PUBLIC_API_URL
+                  ? 'Post a listing and buyers with matching requirements will appear here.'
+                  : 'Set EXPO_PUBLIC_API_URL to enable the matching engine.'}
+              </Text>
+            </View>
+          )}
+          {activeTab === 'matched' && !matchLoading && matchedBuyers.map((b, i) => {
             const sent = requests[b.id]?.sent;
             return (
               <View key={b.id} style={styles.buyerCard}>
@@ -475,4 +487,14 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.line2,
   },
   withdrawBtnText: { fontFamily: Fonts.sansMedium, fontSize: 11, color: Colors.ink },
+  emptyMatched: {
+    padding: 36, alignItems: 'center',
+    backgroundColor: Colors.paper, borderRadius: 16,
+    borderWidth: 1, borderStyle: 'dashed', borderColor: Colors.line2,
+  },
+  emptyMatchedTitle: { fontFamily: Fonts.serif, fontSize: 18, color: Colors.ink, marginBottom: 8 },
+  emptyMatchedSub: {
+    fontFamily: Fonts.sans, fontSize: 12, color: Colors.muted,
+    textAlign: 'center', lineHeight: 18,
+  },
 });
