@@ -1,6 +1,6 @@
 import {
-  collection, addDoc, query, where, onSnapshot,
-  updateDoc, doc, serverTimestamp, orderBy, limit,
+  collection, addDoc, query, where, onSnapshot, orderBy,
+  updateDoc, doc, serverTimestamp, limit,
   startAfter, getDocs, type QueryDocumentSnapshot, type DocumentData, type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from './firebase';
@@ -50,11 +50,7 @@ export function subscribeBrokerListings(
   uid: string,
   callback: (listings: BrokerListing[]) => void,
 ): Unsubscribe {
-  const q = query(
-    collection(db, COL),
-    where('uid', '==', uid),
-    orderBy('createdAt', 'desc'),
-  );
+  const q = query(collection(db, COL), where('uid', '==', uid));
   return onSnapshot(q, (snap) => {
     const listings: BrokerListing[] = snap.docs.map((d) => {
       const data = d.data();
@@ -68,6 +64,7 @@ export function subscribeBrokerListings(
         views: data.views ?? 0,
       };
     });
+    listings.sort((a, b) => a.title.localeCompare(b.title));
     callback(listings);
   });
 }
@@ -76,35 +73,33 @@ export async function getDiscoverListings(
   pageSize = 10,
   after?: QueryDocumentSnapshot<DocumentData>,
 ): Promise<{ listings: Listing[]; lastDoc: QueryDocumentSnapshot<DocumentData> | null }> {
-  let q = query(
-    collection(db, COL),
-    where('status', '==', 'Active'),
-    orderBy('createdAt', 'desc'),
-    limit(pageSize),
-  );
-  if (after) q = query(q, startAfter(after));
+  // Single-field orderBy avoids composite index requirement; status filtered client-side
+  let q = query(collection(db, COL), orderBy('createdAt', 'desc'), limit(pageSize));
+  if (after) q = query(collection(db, COL), orderBy('createdAt', 'desc'), limit(pageSize), startAfter(after));
 
   const snap = await getDocs(q);
   const lastDoc = snap.docs.length === pageSize ? snap.docs[snap.docs.length - 1] : null;
 
-  const listings: Listing[] = snap.docs.map((d) => {
-    const data = d.data();
-    return {
-      id: d.id,
-      uid: String(data.uid ?? ''),
-      tone: toneFromId(d.id),
-      idx: idxFromId(d.id),
-      photos: (data.photos as unknown[])?.length ?? 0,
-      video: !!data.videoUrl,
-      title: String(data.title ?? ''),
-      price: String(data.price ?? ''),
-      sub: [data.area, data.facing ? `${data.facing} facing` : '', data.floor ? `Floor ${data.floor}` : ''].filter(Boolean).join(' · '),
-      broker: String(data.brokerName ?? ''),
-      firm: String(data.brokerFirm ?? ''),
-      verified: false,
-      rera: data.rera ? String(data.rera) : null,
-    };
-  });
+  const listings: Listing[] = snap.docs
+    .filter(d => (d.data().status ?? 'Active') === 'Active')
+    .map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        uid: String(data.uid ?? ''),
+        tone: toneFromId(d.id),
+        idx: idxFromId(d.id),
+        photos: (data.photos as unknown[])?.length ?? 0,
+        video: !!data.videoUrl,
+        title: String(data.title ?? ''),
+        price: String(data.price ?? ''),
+        sub: [data.area, data.facing ? `${data.facing} facing` : '', data.floor ? `Floor ${data.floor}` : ''].filter(Boolean).join(' · '),
+        broker: String(data.brokerName ?? ''),
+        firm: String(data.brokerFirm ?? ''),
+        verified: false,
+        rera: data.rera ? String(data.rera) : null,
+      };
+    });
 
   return { listings, lastDoc };
 }

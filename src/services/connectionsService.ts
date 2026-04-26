@@ -1,6 +1,6 @@
 import {
   collection, addDoc, query, where, onSnapshot, updateDoc,
-  doc, serverTimestamp, orderBy, type Unsubscribe,
+  doc, serverTimestamp, type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -44,13 +44,11 @@ export function subscribeBuyerConnections(
   buyerUid: string,
   callback: (connections: Connection[]) => void,
 ): Unsubscribe {
-  const q = query(
-    collection(db, COL),
-    where('buyerUid', '==', buyerUid),
-    orderBy('createdAt', 'desc'),
-  );
+  const q = query(collection(db, COL), where('buyerUid', '==', buyerUid));
   return onSnapshot(q, (snap) => {
-    callback(snap.docs.map(docToConnection));
+    const conns = snap.docs.map(docToConnection);
+    conns.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    callback(conns);
   });
 }
 
@@ -59,16 +57,12 @@ export function subscribeBrokerConnections(
   status: ConnectionStatus | 'all',
   callback: (connections: Connection[]) => void,
 ): Unsubscribe {
-  let q = query(
-    collection(db, COL),
-    where('brokerUid', '==', brokerUid),
-    orderBy('createdAt', 'desc'),
-  );
-  if (status !== 'all') {
-    q = query(q, where('status', '==', status));
-  }
+  const q = query(collection(db, COL), where('brokerUid', '==', brokerUid));
   return onSnapshot(q, (snap) => {
-    callback(snap.docs.map(docToConnection));
+    let conns = snap.docs.map(docToConnection);
+    if (status !== 'all') conns = conns.filter(c => c.status === status);
+    conns.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    callback(conns);
   });
 }
 

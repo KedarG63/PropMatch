@@ -1,6 +1,6 @@
 import {
   collection, addDoc, query, where, onSnapshot,
-  updateDoc, doc, serverTimestamp, orderBy, type Unsubscribe,
+  updateDoc, doc, serverTimestamp, type Unsubscribe,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import type { PropertyStatus, PropertyTone, VisitedProperty } from '../types';
@@ -44,36 +44,36 @@ export function subscribeVisits(
   uid: string,
   callback: (visits: VisitedProperty[]) => void,
 ): Unsubscribe {
-  const q = query(
-    collection(db, COL),
-    where('uid', '==', uid),
-    orderBy('visitedAt', 'desc'),
-  );
+  const q = query(collection(db, COL), where('uid', '==', uid));
   return onSnapshot(q, (snap) => {
-    const visits: VisitedProperty[] = snap.docs.map((d) => {
+    const raw = snap.docs.map((d) => {
       const data = d.data();
-      const ts = data.visitedAt?.toDate?.();
+      const ts: Date | undefined = data.visitedAt?.toDate?.();
       const visited = ts
         ? ts.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
         : '';
       return {
-        id: d.id,
-        title: data.title ?? '',
-        price: data.price ?? '',
-        tone: toneFromId(d.id),
-        idx: idxFromId(d.id),
-        photos: data.photos ?? 0,
-        video: data.video ?? false,
-        visited,
-        broker: data.broker ?? '',
-        agent: data.agent ?? '',
-        pros: data.pros ?? [],
-        cons: data.cons ?? [],
-        notes: data.notes ?? '',
-        status: data.status ?? 'undecided',
+        _ts: ts?.getTime() ?? 0,
+        visit: {
+          id: d.id,
+          title: data.title ?? '',
+          price: data.price ?? '',
+          tone: toneFromId(d.id),
+          idx: idxFromId(d.id),
+          photos: data.photos ?? 0,
+          video: data.video ?? false,
+          visited,
+          broker: data.broker ?? '',
+          agent: data.agent ?? '',
+          pros: data.pros ?? [],
+          cons: data.cons ?? [],
+          notes: data.notes ?? '',
+          status: data.status ?? 'undecided',
+        } as VisitedProperty,
       };
     });
-    callback(visits);
+    raw.sort((a, b) => b._ts - a._ts);
+    callback(raw.map(r => r.visit));
   });
 }
 

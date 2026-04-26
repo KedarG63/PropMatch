@@ -1,6 +1,6 @@
 import {
   collection, addDoc, query, where, getDocs,
-  updateDoc, doc, serverTimestamp, orderBy, limit,
+  updateDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -40,16 +40,10 @@ export async function postRequirement(uid: string, data: RequirementData): Promi
 }
 
 export async function getActiveRequirement(uid: string): Promise<Requirement | null> {
-  const q = query(
-    collection(db, COL),
-    where('uid', '==', uid),
-    where('active', '==', true),
-    orderBy('createdAt', 'desc'),
-    limit(1),
-  );
+  const q = query(collection(db, COL), where('uid', '==', uid), where('active', '==', true));
   const snap = await getDocs(q);
   if (snap.empty) return null;
-  const d = snap.docs[0];
+  const d = snap.docs[snap.docs.length - 1];
   const data = d.data();
   return {
     id: d.id,
