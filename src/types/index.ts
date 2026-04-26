@@ -31,6 +31,7 @@ export interface VisitedProperty {
 
 export interface Listing {
   id: string;
+  uid: string;          // broker's Firebase uid
   tone: PropertyTone;
   idx: number;
   photos: number;
@@ -73,6 +74,7 @@ export interface MatchedBuyer {
 export interface ChatThread {
   name: string;
   who: string;
+  connId?: string;     // Firestore connection doc ID for real-time chat
 }
 
 export interface ChatMessage {

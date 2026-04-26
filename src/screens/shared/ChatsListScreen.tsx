@@ -1,31 +1,52 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import {
+  View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator,
+} from 'react-native';
 import { Colors, Fonts, Shadow } from '../../theme';
 import EditorialHeader from '../../components/EditorialHeader';
-import type { ChatThread, Role } from '../../types';
-
-const BUYER_CHATS = [
-  { n: 'Rajesh Patil',  last: 'Saturday 11am works? I can also show—', when: '10:47', unread: 2, ctx: '3 BHK · Aundh' },
-  { n: 'Priya Shah',    last: "Owner is open to ₹95L.",                when: 'Yd',    unread: 0, ctx: '2 BHK · Baner' },
-  { n: 'Anil Kumar',    last: 'Sharing brochure now.',                 when: 'Mon',   unread: 0, ctx: '3 BHK · Balewadi' },
-];
-
-const BROKER_CHATS = [
-  { n: 'Ananya G.',     last: 'Sounds great — what time on Saturday?', when: '2m', unread: 2, ctx: '3 BHK · Baner' },
-  { n: 'Suresh K.',     last: 'Will the price include parking?',       when: '1h', unread: 1, ctx: '2 BHK · Aundh' },
-  { n: 'Mira & Devesh', last: 'Thanks for the brochure!',              when: 'Yd', unread: 0, ctx: '4 BHK · K. Park' },
-];
+import {
+  subscribeBuyerConnections, subscribeBrokerConnections,
+  respondToConnection, type Connection,
+} from '../../services/connectionsService';
+import type { ChatThread, Role, AppUser } from '../../types';
 
 interface Props {
   onOpen: (thread: ChatThread) => void;
   role: Role;
+  appUser: AppUser;
 }
 
-export default function ChatsListScreen({ onOpen, role }: Props) {
-  const items = role === 'broker' ? BROKER_CHATS : BUYER_CHATS;
-  const unreadCount = items.filter(i => i.unread > 0).length;
+export default function ChatsListScreen({ onOpen, role, appUser }: Props) {
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2);
+  useEffect(() => {
+    if (role === 'buyer') {
+      const unsub = subscribeBuyerConnections(appUser.uid, (conns) => {
+        setConnections(conns);
+        setLoading(false);
+      });
+      return unsub;
+    } else {
+      const unsub = subscribeBrokerConnections(appUser.uid, 'all', (conns) => {
+        setConnections(conns);
+        setLoading(false);
+      });
+      return unsub;
+    }
+  }, [appUser.uid, role]);
+
+  const accepted = connections.filter(c => c.status === 'accepted');
+  const pending = connections.filter(c => c.status === 'pending');
+  const unreadCount = accepted.length;
+
+  const initials = (name: string) =>
+    name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  const openThread = (conn: Connection) => {
+    const name = role === 'buyer' ? conn.brokerName : conn.buyerName;
+    onOpen({ name, who: initials(name), connId: conn.id });
+  };
 
   return (
     <View style={styles.container}>
@@ -34,45 +55,110 @@ export default function ChatsListScreen({ onOpen, role }: Props) {
         title="Conversations"
         right={
           <View style={styles.unreadBadge}>
-            <Text style={styles.unreadBadgeText}>{unreadCount} UNREAD</Text>
+            <Text style={styles.unreadBadgeText}>{unreadCount} ACTIVE</Text>
           </View>
         }
       />
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {items.map((c, i) => (
-          <TouchableOpacity
-            key={i}
-            onPress={() => onOpen({ name: c.n, who: initials(c.n) })}
-            style={styles.chatItem}
-          >
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(c.n)}</Text>
-            </View>
-            <View style={styles.chatBody}>
-              <View style={styles.chatTopRow}>
-                <View style={styles.chatNameRow}>
-                  <Text style={styles.chatName}>{c.n}</Text>
-                  <Text style={styles.verifiedIcon}>✓</Text>
-                </View>
-                <Text style={styles.chatTime}>{c.when}</Text>
-              </View>
-              <Text style={styles.chatContext}>RE: {c.ctx.toUpperCase()}</Text>
-              <Text
-                style={[styles.chatLast, c.unread > 0 && styles.chatLastUnread]}
-                numberOfLines={1}
-              >
-                {c.last}
+      {loading ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={Colors.rust} />
+        </View>
+      ) : (
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+
+          {/* Accepted connections — full chat threads */}
+          {accepted.length > 0 && (
+            <>
+              <Text style={styles.sectionLabel}>Active chats</Text>
+              {accepted.map(conn => {
+                const name = role === 'buyer' ? conn.brokerName : conn.buyerName;
+                return (
+                  <TouchableOpacity
+                    key={conn.id}
+                    onPress={() => openThread(conn)}
+                    style={styles.chatItem}
+                  >
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>{initials(name)}</Text>
+                    </View>
+                    <View style={styles.chatBody}>
+                      <View style={styles.chatTopRow}>
+                        <View style={styles.chatNameRow}>
+                          <Text style={styles.chatName}>{name}</Text>
+                          <Text style={styles.verifiedIcon}>✓</Text>
+                        </View>
+                        <Text style={styles.statusChip}>Connected</Text>
+                      </View>
+                      <Text style={styles.chatContext}>
+                        RE: {conn.listingTitle.toUpperCase()} · {conn.listingPrice}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </>
+          )}
+
+          {/* Pending connections — broker can accept/reject; buyer sees waiting state */}
+          {pending.length > 0 && (
+            <>
+              <Text style={styles.sectionLabel}>
+                {role === 'broker' ? 'Connection requests' : 'Awaiting response'}
+              </Text>
+              {pending.map(conn => {
+                const name = role === 'buyer' ? conn.brokerName : conn.buyerName;
+                return (
+                  <View key={conn.id} style={styles.pendingItem}>
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>{initials(name)}</Text>
+                    </View>
+                    <View style={styles.chatBody}>
+                      <View style={styles.chatTopRow}>
+                        <Text style={styles.chatName}>{name}</Text>
+                        <Text style={styles.pendingChip}>Pending</Text>
+                      </View>
+                      <Text style={styles.chatContext}>
+                        RE: {conn.listingTitle.toUpperCase()} · {conn.listingPrice}
+                      </Text>
+                      {conn.message ? (
+                        <Text style={styles.pendingMsg} numberOfLines={2}>{conn.message}</Text>
+                      ) : null}
+                    </View>
+                    {role === 'broker' && (
+                      <View style={styles.actionBtns}>
+                        <TouchableOpacity
+                          style={styles.acceptBtn}
+                          onPress={() => respondToConnection(conn.id, 'accepted')}
+                        >
+                          <Text style={styles.acceptBtnText}>Accept</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.rejectBtn}
+                          onPress={() => respondToConnection(conn.id, 'rejected')}
+                        >
+                          <Text style={styles.rejectBtnText}>Decline</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </>
+          )}
+
+          {connections.length === 0 && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No conversations yet</Text>
+              <Text style={styles.emptySub}>
+                {role === 'buyer'
+                  ? 'Send a connection request from the Discover tab to start chatting with brokers.'
+                  : 'When buyers connect with your listings, their requests will appear here.'}
               </Text>
             </View>
-            {c.unread > 0 && (
-              <View style={styles.unreadBubble}>
-                <Text style={styles.unreadBubbleText}>{c.unread}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -86,36 +172,74 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.cream2, borderWidth: 1, borderColor: Colors.line2,
   },
   unreadBadgeText: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.ink3, letterSpacing: 0.8 },
+  sectionLabel: {
+    fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.muted,
+    letterSpacing: 2, textTransform: 'uppercase', marginTop: 8, marginBottom: 4, marginLeft: 2,
+  },
   chatItem: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     padding: 14, borderRadius: 12,
     backgroundColor: Colors.paper, borderWidth: 1, borderColor: Colors.line,
     ...Shadow.sm,
   },
+  pendingItem: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
+    padding: 14, borderRadius: 12,
+    backgroundColor: Colors.paper, borderWidth: 1, borderColor: Colors.line2,
+    ...Shadow.sm,
+  },
   avatar: {
     width: 42, height: 42, borderRadius: 999,
     backgroundColor: Colors.rust, alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0,
   },
-  avatarText: {
-    fontFamily: Fonts.serifItalic, fontWeight: '700', fontSize: 15, color: Colors.cream,
-  },
+  avatarText: { fontFamily: Fonts.serifItalic, fontWeight: '700', fontSize: 15, color: Colors.cream },
   chatBody: { flex: 1, minWidth: 0 },
-  chatTopRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginBottom: 1 },
+  chatTopRow: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', gap: 8, marginBottom: 2,
+  },
   chatNameRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   chatName: { fontFamily: Fonts.sansBold, fontSize: 13.5, color: Colors.ink },
   verifiedIcon: { fontSize: 10, color: Colors.sage },
-  chatTime: { fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted },
   chatContext: {
     fontFamily: Fonts.mono, fontSize: 9.5, color: Colors.rust,
     letterSpacing: 1, textTransform: 'uppercase', marginTop: 1,
   },
-  chatLast: {
-    fontFamily: Fonts.sans, fontSize: 12.5, color: Colors.muted, marginTop: 4,
+  statusChip: {
+    fontFamily: Fonts.mono, fontSize: 9, color: Colors.sage,
+    letterSpacing: 1, textTransform: 'uppercase',
+    backgroundColor: Colors.sageSoft, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
   },
-  chatLastUnread: { fontFamily: Fonts.sansMedium, color: Colors.ink },
-  unreadBubble: {
-    minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 999,
-    backgroundColor: Colors.rust, alignItems: 'center', justifyContent: 'center',
+  pendingChip: {
+    fontFamily: Fonts.mono, fontSize: 9, color: Colors.muted,
+    letterSpacing: 1, textTransform: 'uppercase',
+    backgroundColor: Colors.cream2, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+    borderWidth: 1, borderColor: Colors.line2,
   },
-  unreadBubbleText: { fontFamily: Fonts.mono, fontSize: 10.5, fontWeight: '700', color: Colors.cream },
+  pendingMsg: {
+    fontFamily: Fonts.sans, fontSize: 12, color: Colors.ink3, marginTop: 6, lineHeight: 17,
+  },
+  actionBtns: { flexDirection: 'column', gap: 6, flexShrink: 0 },
+  acceptBtn: {
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8,
+    backgroundColor: Colors.ink, alignItems: 'center',
+  },
+  acceptBtnText: { fontFamily: Fonts.sansBold, fontSize: 11, color: Colors.cream },
+  rejectBtn: {
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8,
+    borderWidth: 1, borderColor: Colors.line2, alignItems: 'center',
+  },
+  rejectBtnText: { fontFamily: Fonts.sansMedium, fontSize: 11, color: Colors.muted },
+  emptyState: {
+    padding: 48, alignItems: 'center',
+    backgroundColor: Colors.paper, borderRadius: 16,
+    borderWidth: 1, borderStyle: 'dashed', borderColor: Colors.line2,
+    marginTop: 16,
+  },
+  emptyTitle: { fontFamily: Fonts.serif, fontSize: 18, color: Colors.ink, marginBottom: 8 },
+  emptySub: {
+    fontFamily: Fonts.sans, fontSize: 12, color: Colors.muted,
+    textAlign: 'center', lineHeight: 18,
+  },
 });

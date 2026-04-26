@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet,
+  View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { Colors, Fonts, Shadow } from '../../theme';
 import EditorialHeader from '../../components/EditorialHeader';
+import { postRequirement } from '../../services/requirementsService';
+import type { AppUser } from '../../types';
 
 interface Props {
   onPosted: () => void;
+  appUser: AppUser;
 }
 
 const Pill = ({ active, onPress, children, danger = false }: {
@@ -45,17 +48,18 @@ const Toggle = ({ value, onToggle, label, sub, danger = false }: {
   </TouchableOpacity>
 );
 
-export default function PostRequirementScreen({ onPosted }: Props) {
+export default function PostRequirementScreen({ onPosted, appUser }: Props) {
   const [bhk, setBhk] = useState(['3']);
   const [budgetMin, setBudgetMin] = useState(125);
   const [budgetMax, setBudgetMax] = useState(150);
-  const [localities, setLocalities] = useState(['Aundh', 'Baner']);
-  const [strict, setStrict] = useState(true);
+  const [localities, setLocalities] = useState<string[]>([]);
+  const [strict, setStrict] = useState(false);
   const [possession, setPossession] = useState('ready');
   const [pType, setPType] = useState('flat');
   const [verifiedOnly, setVerifiedOnly] = useState(true);
   const [notes, setNotes] = useState('');
   const [localityInput, setLocalityInput] = useState('');
+  const [posting, setPosting] = useState(false);
 
   const fmtCr = (lakh: number) =>
     lakh >= 100 ? `₹${(lakh / 100).toFixed(2)} Cr` : `₹${lakh} L`;
@@ -237,8 +241,29 @@ export default function PostRequirementScreen({ onPosted }: Props) {
         />
 
         {/* Post button */}
-        <TouchableOpacity style={styles.postBtn} onPress={onPosted}>
-          <Text style={styles.postBtnText}>Post requirement</Text>
+        <TouchableOpacity
+          style={[styles.postBtn, posting && { opacity: 0.6 }]}
+          disabled={posting}
+          onPress={async () => {
+            if (bhk.length === 0) { Alert.alert('Select BHK', 'Please select at least one BHK configuration.'); return; }
+            setPosting(true);
+            try {
+              await postRequirement(appUser.uid, {
+                bhk, budgetMin, budgetMax, localities, strict,
+                possession, propertyTypes: [pType], notes, verifiedOnly,
+              });
+              onPosted();
+            } catch {
+              Alert.alert('Error', 'Could not post requirement. Please try again.');
+            } finally {
+              setPosting(false);
+            }
+          }}
+        >
+          {posting
+            ? <ActivityIndicator color={Colors.cream} />
+            : <Text style={styles.postBtnText}>Post requirement</Text>
+          }
         </TouchableOpacity>
 
         <Text style={styles.postNote}>

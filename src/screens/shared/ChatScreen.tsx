@@ -1,40 +1,52 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
-  StyleSheet, KeyboardAvoidingView, Platform,
+  StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Shadow } from '../../theme';
 import PropertyPhoto from '../../components/PropertyPhoto';
-import type { ChatThread, ChatMessage, Role } from '../../types';
+import { subscribeChatThread, sendTextMessage } from '../../services/chatService';
+import type { ChatThread, ChatMessage, Role, AppUser } from '../../types';
 
 interface Props {
   thread: ChatThread | null;
   onBack: () => void;
   role: Role;
+  appUser: AppUser;
 }
 
-const INITIAL_MESSAGES: ChatMessage[] = [
-  { id: 1, who: 'them', t: 'Hi! Thanks for connecting. I have the floor plans ready — want me to share?', time: '10:42' },
-  { id: 2, who: 'me', t: 'Yes please. Also is the kitchen modular?', time: '10:43' },
-  { id: 3, who: 'them', t: 'Yes, fully modular with Hettich fittings. Sharing the property card now —', time: '10:44' },
-  { id: 4, who: 'them', card: { title: '3 BHK Flat · Baner', price: '₹1.38 Cr', sub: '1,250 sq ft · 6th flr · East', tone: 'c', idx: 1 }, time: '10:44' },
-  { id: 5, who: 'me', t: "That's exactly what I'm looking for. Can we visit on Saturday?", time: '10:46' },
-  { id: 6, who: 'them', t: 'Absolutely. Saturday 11am works? I can also show you a similar 3 BHK on the 9th floor.', time: '10:47' },
-];
-
-export default function ChatScreen({ thread, onBack, role }: Props) {
+export default function ChatScreen({ thread, onBack, role, appUser }: Props) {
   const [muted, setMuted] = useState(false);
   const [draft, setDraft] = useState('');
   const [showAttach, setShowAttach] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState(!!thread?.connId);
+  const scrollRef = useRef<ScrollView>(null);
 
-  const displayName = thread?.name || 'Rahul Mehta';
-  const displayWho = thread?.who || 'RM';
+  useEffect(() => {
+    if (!thread?.connId) { setLoading(false); return; }
+    setLoading(true);
+    const unsub = subscribeChatThread(thread.connId, appUser.uid, (msgs) => {
+      setMessages(msgs);
+      setLoading(false);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+    });
+    return unsub;
+  }, [thread?.connId, appUser.uid]);
 
-  const send = () => {
+  const displayName = thread?.name || '';
+  const displayWho = thread?.who || '?';
+  const connId = thread?.connId;
+
+  const send = async () => {
     if (!draft.trim()) return;
-    setMessages(m => [...m, { id: Date.now(), who: 'me', t: draft, time: 'now' }]);
+    const text = draft;
     setDraft('');
+    if (connId) {
+      await sendTextMessage(connId, appUser.uid, text);
+    } else {
+      setMessages(m => [...m, { id: Date.now(), who: 'me', t: text, time: 'now' }]);
+    }
   };
 
   return (
@@ -56,7 +68,9 @@ export default function ChatScreen({ thread, onBack, role }: Props) {
             <Text style={styles.headerName}>{displayName}</Text>
             <Text style={styles.verifiedIcon}>✓</Text>
           </View>
-          <Text style={styles.headerContext}>RE: 3 BHK · BANER · ₹1.38 CR</Text>
+          <Text style={styles.headerContext}>
+            {thread?.connId ? 'CONNECTED' : 'RE: PROPERTY'}
+          </Text>
         </View>
       </View>
 
@@ -82,70 +96,73 @@ export default function ChatScreen({ thread, onBack, role }: Props) {
       )}
 
       {/* Messages */}
-      <ScrollView
-        style={styles.messageList}
-        contentContainerStyle={styles.messageContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={styles.connectedLabel}>— Connected · 14 Apr —</Text>
+      {loading ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={Colors.rust} />
+        </View>
+      ) : (
+        <ScrollView
+          ref={scrollRef}
+          style={styles.messageList}
+          contentContainerStyle={styles.messageContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.connectedLabel}>— Connected —</Text>
 
-        {messages.map(m => {
-          const mine = m.who === 'me';
-          if (m.card) {
-            return (
-              <View key={m.id} style={[styles.cardMessage, mine ? styles.mine : styles.theirs]}>
-                <View style={{ borderRadius: 14, overflow: 'hidden' }}>
-                  <PropertyPhoto tone={m.card.tone} idx={m.card.idx} height={120} />
+          {messages.length === 0 && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No messages yet. Say hello!</Text>
+            </View>
+          )}
+
+          {messages.map(m => {
+            const mine = m.who === 'me';
+            if (m.card) {
+              return (
+                <View key={m.id} style={[styles.cardMessage, mine ? styles.mine : styles.theirs]}>
+                  <View style={{ borderRadius: 14, overflow: 'hidden' }}>
+                    <PropertyPhoto tone={m.card.tone} idx={m.card.idx} height={120} />
+                  </View>
+                  <View style={styles.cardMsgContent}>
+                    <Text style={styles.cardMsgLabel}>Property card · shared</Text>
+                    <Text style={styles.cardMsgTitle}>{m.card.title}</Text>
+                    <Text style={styles.cardMsgPrice}>{m.card.price}</Text>
+                    <Text style={styles.cardMsgSub}>{m.card.sub}</Text>
+                    <TouchableOpacity style={styles.viewListingBtn}>
+                      <Text style={styles.viewListingBtnText}>View full listing →</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={[styles.msgTime, mine ? styles.msgTimeRight : styles.msgTimeLeft]}>
+                    {m.time}
+                  </Text>
                 </View>
-                <View style={styles.cardMsgContent}>
-                  <Text style={styles.cardMsgLabel}>Property card · shared</Text>
-                  <Text style={styles.cardMsgTitle}>{m.card.title}</Text>
-                  <Text style={styles.cardMsgPrice}>{m.card.price}</Text>
-                  <Text style={styles.cardMsgSub}>{m.card.sub}</Text>
-                  <TouchableOpacity style={styles.viewListingBtn}>
-                    <Text style={styles.viewListingBtnText}>View full listing →</Text>
-                  </TouchableOpacity>
+              );
+            }
+            return (
+              <View key={m.id} style={mine ? styles.mine : styles.theirs}>
+                <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+                  <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{m.t}</Text>
                 </View>
                 <Text style={[styles.msgTime, mine ? styles.msgTimeRight : styles.msgTimeLeft]}>
                   {m.time}
                 </Text>
               </View>
             );
-          }
-          return (
-            <View key={m.id} style={mine ? styles.mine : styles.theirs}>
-              <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-                <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{m.t}</Text>
-              </View>
-              <Text style={[styles.msgTime, mine ? styles.msgTimeRight : styles.msgTimeLeft]}>
-                {m.time}
-              </Text>
-            </View>
-          );
-        })}
+          })}
 
-        {muted && role === 'buyer' && (
-          <View style={styles.mutedNotice}>
-            <Text style={styles.mutedNoticeText}>🔇 BROKER CANNOT SEND NEW MESSAGES</Text>
-          </View>
-        )}
-      </ScrollView>
+          {muted && role === 'buyer' && (
+            <View style={styles.mutedNotice}>
+              <Text style={styles.mutedNoticeText}>🔇 BROKER CANNOT SEND NEW MESSAGES</Text>
+            </View>
+          )}
+        </ScrollView>
+      )}
 
       {/* Composer */}
       <View style={styles.composer}>
         {showAttach && (
           <View style={styles.attachPanel}>
-            <TouchableOpacity
-              style={styles.attachOption}
-              onPress={() => {
-                setMessages(m => [...m, {
-                  id: Date.now(), who: 'me',
-                  card: { title: '2 BHK · Aundh', price: '₹1.05 Cr', sub: '920 sq ft · 4th flr · NE', tone: 'a', idx: 0 },
-                  time: 'now',
-                }]);
-                setShowAttach(false);
-              }}
-            >
+            <TouchableOpacity style={styles.attachOption} onPress={() => setShowAttach(false)}>
               <Text style={styles.attachOptionText}>🏠 Property card</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.attachOption} onPress={() => setShowAttach(false)}>
@@ -216,9 +233,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.line,
   },
   muteBannerActive: { backgroundColor: Colors.ink, borderBottomColor: Colors.ink },
-  muteBannerText: {
-    fontFamily: Fonts.sansMedium, fontSize: 12, color: Colors.ink2,
-  },
+  muteBannerText: { fontFamily: Fonts.sansMedium, fontSize: 12, color: Colors.ink2 },
   muteBannerTextActive: { color: Colors.cream },
   muteBannerHint: {
     fontFamily: Fonts.mono, fontSize: 9.5, letterSpacing: 1.8,
@@ -236,11 +251,11 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.mono, fontSize: 9.5, letterSpacing: 2.2,
     color: Colors.muted, textTransform: 'uppercase', paddingBottom: 10,
   },
+  emptyState: { alignItems: 'center', paddingVertical: 32 },
+  emptyText: { fontFamily: Fonts.sans, fontSize: 13, color: Colors.muted },
   mine: { alignItems: 'flex-end' },
   theirs: { alignItems: 'flex-start' },
-  bubble: {
-    maxWidth: '78%', paddingHorizontal: 13, paddingVertical: 10,
-  },
+  bubble: { maxWidth: '78%', paddingHorizontal: 13, paddingVertical: 10 },
   bubbleMine: {
     backgroundColor: Colors.ink,
     borderTopLeftRadius: 16, borderTopRightRadius: 16,

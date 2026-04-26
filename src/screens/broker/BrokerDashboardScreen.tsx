@@ -1,18 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet,
 } from 'react-native';
 import { Colors, Fonts, Shadow } from '../../theme';
 import EditorialHeader from '../../components/EditorialHeader';
 import PropertyPhoto from '../../components/PropertyPhoto';
-import type { BrokerListing, MatchedBuyer } from '../../types';
-
-const BROKER_LISTINGS: BrokerListing[] = [
-  { id: 'b1', tone: 'a', idx: 0, title: '3 BHK · Baner', price: '₹1.38 Cr', status: 'Active', views: 142 },
-  { id: 'b2', tone: 'c', idx: 2, title: '2 BHK · Aundh', price: '₹98 L', status: 'Active', views: 89 },
-  { id: 'b3', tone: 'b', idx: 1, title: '4 BHK · K. Park', price: '₹3.10 Cr', status: 'Paused', views: 56 },
-  { id: 'b4', tone: 'd', idx: 0, title: '2 BHK · Kothrud', price: '₹1.10 Cr', status: 'Sold', views: 234 },
-];
+import { subscribeBrokerListings } from '../../services/listingsService';
+import type { BrokerListing, MatchedBuyer, AppUser } from '../../types';
 
 const MATCHED_BUYERS: MatchedBuyer[] = [
   {
@@ -34,10 +28,17 @@ const MATCHED_BUYERS: MatchedBuyer[] = [
 
 interface Props {
   onConnectBuyer: () => void;
+  appUser: AppUser;
 }
 
-export default function BrokerDashboardScreen({ onConnectBuyer }: Props) {
+export default function BrokerDashboardScreen({ onConnectBuyer, appUser }: Props) {
   const [activeTab, setActiveTab] = useState<'matched' | 'connections' | 'pending'>('matched');
+  const [listings, setListings] = useState<BrokerListing[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribeBrokerListings(appUser.uid, setListings);
+    return unsub;
+  }, [appUser.uid]);
   const [requests, setRequests] = useState<Record<string, { sent: boolean; msg: string }>>({});
   const [drafting, setDrafting] = useState<string | null>(null);
   const [draftMsg, setDraftMsg] = useState('Hi, I have a 3 BHK in Baner that fits your requirement exactly. Happy to share details.');
@@ -68,7 +69,7 @@ export default function BrokerDashboardScreen({ onConnectBuyer }: Props) {
     <View style={styles.container}>
       <EditorialHeader
         kicker="Broker Studio · Today"
-        title="Good morning, Rahul"
+        title={`Good morning, ${appUser.name.split(' ')[0]}`}
         right={
           <View style={styles.verifiedBadge}>
             <Text style={styles.verifiedBadgeText}>✓ VERIFIED</Text>
@@ -96,7 +97,7 @@ export default function BrokerDashboardScreen({ onConnectBuyer }: Props) {
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionKicker}>My Listings</Text>
-            <Text style={styles.sectionTitle}>4 properties</Text>
+            <Text style={styles.sectionTitle}>{listings.length} {listings.length === 1 ? 'property' : 'properties'}</Text>
           </View>
           <TouchableOpacity style={styles.postNewBtn}>
             <Text style={styles.postNewBtnText}>+ Post new</Text>
@@ -109,7 +110,17 @@ export default function BrokerDashboardScreen({ onConnectBuyer }: Props) {
           style={styles.listingsScroll}
           contentContainerStyle={styles.listingsContent}
         >
-          {BROKER_LISTINGS.map(l => (
+          {listings.length === 0 && (
+            <View style={styles.listingCard}>
+              <View style={{ height: 108, backgroundColor: Colors.cream2, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontFamily: Fonts.mono, fontSize: 10, color: Colors.muted }}>NO LISTINGS YET</Text>
+              </View>
+              <View style={styles.listingCardBody}>
+                <Text style={[styles.listingTitle, { color: Colors.muted }]}>Post your first listing</Text>
+              </View>
+            </View>
+          )}
+          {listings.map(l => (
             <View key={l.id} style={styles.listingCard}>
               <View style={{ position: 'relative' }}>
                 <PropertyPhoto tone={l.tone} idx={l.idx} height={108} />

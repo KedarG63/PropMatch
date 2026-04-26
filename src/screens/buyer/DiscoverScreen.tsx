@@ -1,36 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { Colors, Fonts, Shadow } from '../../theme';
 import EditorialHeader from '../../components/EditorialHeader';
 import ChipRow from '../../components/ChipRow';
 import PropertyPhoto from '../../components/PropertyPhoto';
+import { getDiscoverListings } from '../../services/listingsService';
 import type { Listing } from '../../types';
-
-const LISTINGS: Listing[] = [
-  {
-    id: 'l1', tone: 'c', idx: 1, photos: 6, video: true, badge: 'NEW',
-    title: '3 BHK Flat · Baner', price: '₹1.38 Cr',
-    sub: '1,250 sq ft · 6th floor · East facing · Semi-furnished',
-    broker: 'Rahul Mehta', firm: 'Golden Keys Realty', verified: true,
-    rera: 'P52100012345',
-  },
-  {
-    id: 'l2', tone: 'a', idx: 0, photos: 5, video: false, badge: 'PRICE DROP',
-    title: '2 BHK · Aundh', price: '₹1.05 Cr',
-    sub: '920 sq ft · 4th floor · North-east · Unfurnished',
-    broker: 'Devika Rao', firm: 'Cedar Estates', verified: true,
-    rera: 'P52100029988', dropFrom: '₹1.18 Cr',
-  },
-  {
-    id: 'l3', tone: 'd', idx: 2, photos: 7, video: true,
-    title: '3 BHK · Balewadi High St.', price: '₹1.62 Cr',
-    sub: '1,420 sq ft · 9th floor · West facing · Fully furnished',
-    broker: 'Imran Sayyed', firm: 'Northwind Realty', verified: false,
-    rera: null,
-  },
-];
 
 interface Props {
   openConnect: (listing: Listing) => void;
@@ -39,6 +16,38 @@ interface Props {
 export default function DiscoverScreen({ openConnect }: Props) {
   const [sort, setSort] = useState('budget');
   const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [lastDoc, setLastDoc] = useState<Parameters<typeof getDiscoverListings>[1]>(undefined);
+  const [hasMore, setHasMore] = useState(true);
+
+  const loadListings = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await getDiscoverListings(10);
+      setListings(result.listings);
+      setLastDoc(result.lastDoc ?? undefined);
+      setHasMore(result.lastDoc !== null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await getDiscoverListings(10, lastDoc);
+      setListings(prev => [...prev, ...result.listings]);
+      setLastDoc(result.lastDoc ?? undefined);
+      setHasMore(result.lastDoc !== null);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMore, lastDoc, loadingMore]);
+
+  useEffect(() => { loadListings(); }, [loadListings]);
 
   const initials = (name: string) => name.split(' ').map(w => w[0]).join('');
 
@@ -70,12 +79,23 @@ export default function DiscoverScreen({ openConnect }: Props) {
         ]}
       />
 
+      {loading ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={Colors.rust} />
+        </View>
+      ) : (
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {LISTINGS.map(l => (
+        {listings.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No listings yet</Text>
+            <Text style={styles.emptySub}>Listings posted by brokers will appear here. Check back soon.</Text>
+          </View>
+        )}
+        {listings.map(l => (
           <View key={l.id} style={styles.card}>
             {/* Photo zone */}
             <View style={styles.photoContainer}>
@@ -158,8 +178,18 @@ export default function DiscoverScreen({ openConnect }: Props) {
           </View>
         ))}
 
-        <Text style={styles.endLabel}>— End of curated listings —</Text>
+        {hasMore ? (
+          <TouchableOpacity style={styles.loadMoreBtn} onPress={loadMore} disabled={loadingMore}>
+            {loadingMore
+              ? <ActivityIndicator color={Colors.rust} />
+              : <Text style={styles.loadMoreText}>Load more listings</Text>
+            }
+          </TouchableOpacity>
+        ) : listings.length > 0 ? (
+          <Text style={styles.endLabel}>— End of curated listings —</Text>
+        ) : null}
       </ScrollView>
+      )}
     </View>
   );
 }
@@ -264,4 +294,16 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.mono, fontSize: 9.5, letterSpacing: 2.2,
     color: Colors.muted, textTransform: 'uppercase',
   },
+  loadMoreBtn: {
+    padding: 14, borderRadius: 12, borderWidth: 1, borderColor: Colors.line2,
+    alignItems: 'center', marginBottom: 8,
+  },
+  loadMoreText: { fontFamily: Fonts.sansMedium, fontSize: 13, color: Colors.rust },
+  emptyState: {
+    padding: 48, alignItems: 'center',
+    backgroundColor: Colors.paper, borderRadius: 16,
+    borderWidth: 1, borderStyle: 'dashed', borderColor: Colors.line2,
+  },
+  emptyTitle: { fontFamily: Fonts.serif, fontSize: 18, color: Colors.ink, marginBottom: 8 },
+  emptySub: { fontFamily: Fonts.sans, fontSize: 12, color: Colors.muted, textAlign: 'center', lineHeight: 18 },
 });

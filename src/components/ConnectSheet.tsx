@@ -1,19 +1,18 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors, Fonts } from '../theme';
 import PropertyPhoto from './PropertyPhoto';
 import type { Listing } from '../types';
 
 interface Props {
   listing: Listing;
-  onSend: () => void;
+  onSend: (message: string) => Promise<void>;
   onClose: () => void;
 }
 
 export default function ConnectSheet({ listing, onSend, onClose }: Props) {
-  const [draft, setDraft] = useState(
-    "Hi, I'm interested in this property. My budget is ₹1.4 Cr and I'm looking in Baner only."
-  );
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
 
   return (
     <View>
@@ -45,8 +44,19 @@ export default function ConnectSheet({ listing, onSend, onClose }: Props) {
         <Text style={styles.privacyNote}>🔒  Broker sees only after you connect</Text>
       </View>
 
-      <TouchableOpacity style={styles.sendBtn} onPress={onSend}>
-        <Text style={styles.sendBtnText}>Send request</Text>
+      <TouchableOpacity
+        style={[styles.sendBtn, sending && { opacity: 0.6 }]}
+        disabled={sending}
+        onPress={async () => {
+          setSending(true);
+          await onSend(draft);
+          setSending(false);
+        }}
+      >
+        {sending
+          ? <ActivityIndicator color={Colors.cream} />
+          : <Text style={styles.sendBtnText}>Send request</Text>
+        }
       </TouchableOpacity>
     </View>
   );

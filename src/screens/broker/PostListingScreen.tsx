@@ -1,23 +1,27 @@
 import React, { useState } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet,
+  View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { Colors, Fonts, Shadow } from '../../theme';
 import EditorialHeader from '../../components/EditorialHeader';
+import { postListing } from '../../services/listingsService';
+import type { AppUser } from '../../types';
 
 interface Props {
   onPosted: () => void;
+  appUser: AppUser;
 }
 
-export default function PostListingScreen({ onPosted }: Props) {
+export default function PostListingScreen({ onPosted, appUser }: Props) {
   const [fields, setFields] = useState({
-    title: '3 BHK · Baner',
-    price: '₹1.38 Cr',
-    area: '1,250 sq ft',
-    rera: 'P52100012345',
-    floor: '6th floor',
-    facing: 'East',
+    title: '',
+    price: '',
+    area: '',
+    rera: '',
+    floor: '',
+    facing: '',
   });
+  const [posting, setPosting] = useState(false);
 
   const update = (key: keyof typeof fields, val: string) =>
     setFields(f => ({ ...f, [key]: val }));
@@ -55,8 +59,35 @@ export default function PostListingScreen({ onPosted }: Props) {
         ))}
 
         {/* Post button */}
-        <TouchableOpacity style={styles.postBtn} onPress={onPosted}>
-          <Text style={styles.postBtnText}>Post listing</Text>
+        <TouchableOpacity
+          style={[styles.postBtn, posting && { opacity: 0.6 }]}
+          disabled={posting}
+          onPress={async () => {
+            if (!fields.title.trim()) { Alert.alert('Title required', 'Add a property title before posting.'); return; }
+            setPosting(true);
+            try {
+              await postListing(appUser.uid, {
+                title: fields.title.trim(),
+                price: fields.price.trim(),
+                area: fields.area.trim(),
+                rera: fields.rera.trim(),
+                floor: fields.floor.trim(),
+                facing: fields.facing.trim(),
+                brokerName: appUser.name,
+                brokerFirm: '',
+              });
+              onPosted();
+            } catch {
+              Alert.alert('Error', 'Could not post listing. Please try again.');
+            } finally {
+              setPosting(false);
+            }
+          }}
+        >
+          {posting
+            ? <ActivityIndicator color={Colors.cream} />
+            : <Text style={styles.postBtnText}>Post listing</Text>
+          }
         </TouchableOpacity>
 
         <View style={{ height: 40 }} />

@@ -21,6 +21,7 @@ import {
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { auth, saveUid, loadStoredUid, clearStoredUid } from './src/services/firebase';
 import { getUserDoc } from './src/services/userService';
+import { sendConnectionRequest } from './src/services/connectionsService';
 
 import { Colors } from './src/theme';
 import BottomNav from './src/components/BottomNav';
@@ -185,14 +186,15 @@ export default function App() {
 
   if (role === 'buyer') {
     if (chatThread && tab === 'chats') {
-      screen = <ChatScreen thread={chatThread} onBack={() => setChatThread(null)} role="buyer" />;
+      screen = <ChatScreen thread={chatThread} onBack={() => setChatThread(null)} role="buyer" appUser={appUser} />;
     } else if (tab === 'home') {
-      screen = <MyPropertiesScreen openChat={openChat} />;
+      screen = <MyPropertiesScreen openChat={openChat} appUser={appUser} />;
     } else if (tab === 'discover') {
       screen = <DiscoverScreen openConnect={(l) => setConnectSheet(l)} />;
     } else if (tab === 'post') {
       screen = (
         <PostRequirementScreen
+          appUser={appUser}
           onPosted={() => {
             showToast('Requirement posted. Verified brokers can now reach you.');
             setTab('home');
@@ -200,7 +202,7 @@ export default function App() {
         />
       );
     } else if (tab === 'chats') {
-      screen = <ChatsListScreen onOpen={openChat} role="buyer" />;
+      screen = <ChatsListScreen onOpen={openChat} role="buyer" appUser={appUser} />;
     } else {
       screen = (
         <ProfileScreen
@@ -216,16 +218,18 @@ export default function App() {
     }
   } else {
     if (chatThread && tab === 'chats') {
-      screen = <ChatScreen thread={chatThread} onBack={() => setChatThread(null)} role="broker" />;
+      screen = <ChatScreen thread={chatThread} onBack={() => setChatThread(null)} role="broker" appUser={appUser} />;
     } else if (tab === 'broker' || tab === 'matched') {
       screen = (
         <BrokerDashboardScreen
+          appUser={appUser}
           onConnectBuyer={() => showToast('Connection request sent. Awaiting buyer approval.')}
         />
       );
     } else if (tab === 'post') {
       screen = (
         <PostListingScreen
+          appUser={appUser}
           onPosted={() => {
             showToast('Listing posted to verified buyers.');
             setTab('broker');
@@ -233,7 +237,7 @@ export default function App() {
         />
       );
     } else if (tab === 'chats') {
-      screen = <ChatsListScreen onOpen={openChat} role="broker" />;
+      screen = <ChatsListScreen onOpen={openChat} role="broker" appUser={appUser} />;
     } else {
       screen = (
         <ProfileScreen
@@ -267,7 +271,17 @@ export default function App() {
           {connectSheet && (
             <ConnectSheet
               listing={connectSheet}
-              onSend={() => {
+              onSend={async (message) => {
+                await sendConnectionRequest({
+                  buyerUid: appUser.uid,
+                  buyerName: appUser.name,
+                  brokerUid: connectSheet.uid,
+                  brokerName: connectSheet.broker,
+                  listingId: connectSheet.id,
+                  listingTitle: connectSheet.title,
+                  listingPrice: connectSheet.price,
+                  message,
+                });
                 setConnectSheet(null);
                 showToast('Request sent — broker can reply once you approve.');
               }}
