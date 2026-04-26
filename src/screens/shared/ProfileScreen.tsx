@@ -2,15 +2,20 @@ import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { Colors, Fonts, Shadow } from '../../theme';
 import EditorialHeader from '../../components/EditorialHeader';
-import type { Role } from '../../types';
+import type { Role, AppUser } from '../../types';
 
 interface Props {
   role: Role;
+  appUser: AppUser | null;
   setRole: (role: Role) => void;
+  onSignOut: () => void;
 }
 
-export default function ProfileScreen({ role, setRole }: Props) {
+export default function ProfileScreen({ role, appUser, setRole, onSignOut }: Props) {
   const isBuyer = role === 'buyer';
+  const initials = appUser?.name
+    ? appUser.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
+    : (isBuyer ? 'B' : 'R');
 
   return (
     <View style={styles.container}>
@@ -19,16 +24,17 @@ export default function ProfileScreen({ role, setRole }: Props) {
         {/* Profile card */}
         <View style={styles.profileCard}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{isBuyer ? 'AB' : 'RM'}</Text>
+            <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>{isBuyer ? 'Aanya Bhatia' : 'Rahul Mehta'}</Text>
+            <Text style={styles.profileName}>{appUser?.name ?? (isBuyer ? 'Buyer' : 'Broker')}</Text>
             <View style={styles.profileMeta}>
-              <Text style={styles.verifiedIcon}>✓</Text>
+              {appUser?.verified && <Text style={styles.verifiedIcon}>✓</Text>}
               <Text style={styles.profileMetaText}>
-                Verified · {isBuyer ? 'Buyer since Mar 2026' : 'Golden Keys Realty'}
+                {appUser?.verified ? 'Verified · ' : ''}{isBuyer ? 'Buyer' : 'Broker'}
               </Text>
             </View>
+            <Text style={styles.emailText}>{appUser?.email ?? ''}</Text>
           </View>
         </View>
 
@@ -48,7 +54,7 @@ export default function ProfileScreen({ role, setRole }: Props) {
           </TouchableOpacity>
         ))}
 
-        {/* Switch role */}
+        {/* Switch role (demo) */}
         <TouchableOpacity
           style={styles.switchBtn}
           onPress={() => setRole(isBuyer ? 'broker' : 'buyer')}
@@ -56,6 +62,11 @@ export default function ProfileScreen({ role, setRole }: Props) {
           <Text style={styles.switchBtnText}>
             ↻ Switch to {isBuyer ? 'Broker' : 'Buyer'} view (demo)
           </Text>
+        </TouchableOpacity>
+
+        {/* Sign out */}
+        <TouchableOpacity style={styles.signOutBtn} onPress={onSignOut}>
+          <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
     </View>
@@ -84,6 +95,7 @@ const styles = StyleSheet.create({
   profileMeta: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   verifiedIcon: { fontSize: 11, color: Colors.sage },
   profileMetaText: { fontFamily: Fonts.mono, fontSize: 11, color: Colors.muted, letterSpacing: 0.5 },
+  emailText: { fontFamily: Fonts.sans, fontSize: 11, color: Colors.muted, marginTop: 2 },
   menuItem: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     padding: 14, paddingHorizontal: 16,
@@ -102,5 +114,14 @@ const styles = StyleSheet.create({
   switchBtnText: {
     fontFamily: Fonts.mono, fontSize: 11, letterSpacing: 1.8,
     color: Colors.ink3, textTransform: 'uppercase',
+  },
+  signOutBtn: {
+    marginTop: 4, padding: 14, borderRadius: 12,
+    backgroundColor: Colors.rustSoft, borderWidth: 1,
+    borderColor: Colors.rust, alignItems: 'center',
+  },
+  signOutText: {
+    fontFamily: Fonts.sansMedium, fontSize: 14,
+    color: Colors.rustDeep, letterSpacing: 0.3,
   },
 });

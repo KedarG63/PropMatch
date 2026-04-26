@@ -1,4 +1,14 @@
 export type Role = 'buyer' | 'broker';
+
+export interface AppUser {
+  uid: string;
+  name: string;
+  email: string;
+  role: Role;
+  verified: boolean;
+  createdAt: string;
+  fcmToken: string | null;
+}
 export type PropertyStatus = 'shortlisted' | 'undecided' | 'rejected';
 export type PropertyTone = 'a' | 'b' | 'c' | 'd' | 'e';
 

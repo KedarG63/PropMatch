@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, StatusBar, StyleSheet } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -18,6 +18,9 @@ import {
   DMMono_400Regular,
   DMMono_500Medium,
 } from '@expo-google-fonts/dm-mono';
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
+import { auth, saveUid, loadStoredUid, clearStoredUid } from './src/services/firebase';
+import { getUserDoc } from './src/services/userService';
 
 import { Colors } from './src/theme';
 import BottomNav from './src/components/BottomNav';
@@ -25,7 +28,9 @@ import BottomSheet from './src/components/BottomSheet';
 import Toast from './src/components/Toast';
 import ConnectSheet from './src/components/ConnectSheet';
 
-import OnboardingScreen from './src/screens/auth/OnboardingScreen';
+import WelcomeScreen from './src/screens/auth/WelcomeScreen';
+import SignUpScreen from './src/screens/auth/SignUpScreen';
+import LoginScreen from './src/screens/auth/LoginScreen';
 import MyPropertiesScreen from './src/screens/buyer/MyPropertiesScreen';
 import PostRequirementScreen from './src/screens/buyer/PostRequirementScreen';
 import DiscoverScreen from './src/screens/buyer/DiscoverScreen';
@@ -35,9 +40,10 @@ import ProfileScreen from './src/screens/shared/ProfileScreen';
 import BrokerDashboardScreen from './src/screens/broker/BrokerDashboardScreen';
 import PostListingScreen from './src/screens/broker/PostListingScreen';
 
-import type { Role, ChatThread, Listing } from './src/types';
+import type { Role, ChatThread, Listing, AppUser } from './src/types';
 
 type Tab = 'home' | 'discover' | 'post' | 'chats' | 'profile' | 'broker' | 'matched';
+type AuthView = 'welcome' | 'signup' | 'login';
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -53,11 +59,58 @@ export default function App() {
     DMMono_500Medium,
   });
 
-  const [role, setRole] = useState<Role | null>(null);
+  // Firebase auth state
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [appUser, setAppUser] = useState<AppUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Auth flow navigation
+  const [authView, setAuthView] = useState<AuthView>('welcome');
+
+  // App navigation
   const [tab, setTab] = useState<Tab>('home');
   const [chatThread, setChatThread] = useState<ChatThread | null>(null);
   const [connectSheet, setConnectSheet] = useState<Listing | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    // On cold start: if Firebase auth is in-memory (lost after kill), try restoring
+    // the session from the UID we persisted in AsyncStorage.
+    async function tryRestoreSession() {
+      const storedUid = await loadStoredUid();
+      if (storedUid && !auth.currentUser) {
+        const doc = await getUserDoc(storedUid);
+        if (doc) {
+          setAppUser(doc);
+          setTab(doc.role === 'broker' ? 'broker' : 'home');
+          setAuthLoading(false);
+          return;
+        }
+      }
+      setAuthLoading(false);
+    }
+
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      setFirebaseUser(user);
+      if (user) {
+        await saveUid(user.uid);
+        const doc = await getUserDoc(user.uid);
+        setAppUser(doc);
+        if (doc) setTab(doc.role === 'broker' ? 'broker' : 'home');
+      } else {
+        // Only clear stored state if this was an explicit sign-out (not a cold start)
+        if (!authLoading) {
+          setAppUser(null);
+          await clearStoredUid();
+        }
+      }
+      setAuthLoading(false);
+    });
+
+    tryRestoreSession();
+    return unsub;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -69,17 +122,27 @@ export default function App() {
     setTab('chats');
   }, []);
 
-  const handleSetRole = useCallback((r: Role) => {
-    setRole(r);
-    setTab(r === 'broker' ? 'broker' : 'home');
-  }, []);
-
   const handleTabChange = useCallback((t: Tab) => {
     setChatThread(null);
     setTab(t);
   }, []);
 
-  if (!fontsLoaded) {
+  const handleAuthSuccess = useCallback(() => {
+    // onAuthStateChanged fires automatically — nothing to do here
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    await signOut(auth);
+    await clearStoredUid();
+    setFirebaseUser(null);
+    setAppUser(null);
+    setAuthView('welcome');
+    setChatThread(null);
+    setTab('home');
+  }, []);
+
+  // Splash while fonts or auth state are loading
+  if (!fontsLoaded || authLoading) {
     return (
       <SafeAreaProvider>
         <View style={styles.loading} />
@@ -87,16 +150,36 @@ export default function App() {
     );
   }
 
-  if (!role) {
+  // Not authenticated — show auth flow
+  if (!firebaseUser || !appUser) {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.safeArea}>
           <StatusBar barStyle="dark-content" backgroundColor={Colors.cream} />
-          <OnboardingScreen onPick={handleSetRole} />
+          {authView === 'welcome' && (
+            <WelcomeScreen
+              onGetStarted={() => setAuthView('signup')}
+              onSignIn={() => setAuthView('login')}
+            />
+          )}
+          {authView === 'signup' && (
+            <SignUpScreen
+              onSuccess={handleAuthSuccess}
+              onSignIn={() => setAuthView('login')}
+            />
+          )}
+          {authView === 'login' && (
+            <LoginScreen
+              onSuccess={handleAuthSuccess}
+              onSignUp={() => setAuthView('signup')}
+            />
+          )}
         </SafeAreaView>
       </SafeAreaProvider>
     );
   }
+
+  const role: Role = appUser.role;
 
   let screen: React.ReactNode;
 
@@ -119,7 +202,17 @@ export default function App() {
     } else if (tab === 'chats') {
       screen = <ChatsListScreen onOpen={openChat} role="buyer" />;
     } else {
-      screen = <ProfileScreen role={role} setRole={handleSetRole} />;
+      screen = (
+        <ProfileScreen
+          role={role}
+          appUser={appUser}
+          onSignOut={handleSignOut}
+          setRole={(r) => {
+            setAppUser({ ...appUser, role: r });
+            setTab(r === 'broker' ? 'broker' : 'home');
+          }}
+        />
+      );
     }
   } else {
     if (chatThread && tab === 'chats') {
@@ -142,7 +235,17 @@ export default function App() {
     } else if (tab === 'chats') {
       screen = <ChatsListScreen onOpen={openChat} role="broker" />;
     } else {
-      screen = <ProfileScreen role={role} setRole={handleSetRole} />;
+      screen = (
+        <ProfileScreen
+          role={role}
+          appUser={appUser}
+          onSignOut={handleSignOut}
+          setRole={(r) => {
+            setAppUser({ ...appUser, role: r });
+            setTab(r === 'broker' ? 'broker' : 'home');
+          }}
+        />
+      );
     }
   }
 
