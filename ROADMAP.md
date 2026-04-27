@@ -1,7 +1,7 @@
 # PropMatch Mobile — Roadmap
 
-> Last updated: 2026-04-26
-> Current status: Phase 2 complete — full Firestore data layer live (visits, listings, requirements, connections, chat)
+> Last updated: 2026-04-27
+> Current status: Phase 4 complete — push notifications via Expo Push Service
 
 ---
 
@@ -12,8 +12,8 @@
 | 0 | UI Shell (all screens, design system) | ✅ Done |
 | 1 | Firebase Auth + real user accounts | ✅ Done |
 | 2 | Firestore data layer (listings, requirements, visits, connections, chat) | ✅ Done |
-| 3 | Matching engine (Node.js backend + PostgreSQL) | 🔄 Next |
-| 4 | Push notifications (FCM) | After Phase 3 |
+| 3 | Matching engine (Node.js backend + PostgreSQL) | ✅ Done |
+| 4 | Push notifications (FCM) | ✅ Done |
 | 5 | Media (photos, video) via GCS | After Phase 4 |
 | 6 | Anti-spam enforcement (mute, rate limit, verification) | After Phase 5 |
 | 7 | Polish, onboarding flow, app store submission | Final |
@@ -117,9 +117,45 @@ service cloud.firestore {
 
 ---
 
-## Phase 3 — Matching Engine (Backend) 🔄 NEXT
+## Phase 3 — Matching Engine (Backend) ✅ DONE
 
-**Goal:** Buyers see listings ranked by how well they match their requirement. Brokers see buyers ranked by match score. Currently the Discover feed shows all Active listings in chronological order — Phase 3 replaces this with scored, ranked results.
+**Delivered:**
+- `backend/` — Node.js + Express + TypeScript API server
+- `backend/src/scoring.ts` — `matchScore(req, listing)`: BHK +30, budget +25, locality +20 (strict block = 0), possession +15, property type +10, capped at 100
+- `backend/src/routes/matches.ts` — `GET /matches/buyer/:uid` (ranked listings ≥40), `GET /matches/broker/:uid` (ranked buyers)
+- `backend/src/auth.ts` — `requireAuth` middleware: Firebase ID token verification via Admin SDK
+- `backend/src/firebase.ts` — `initializeApp({ credential: applicationDefault() })`, exports `db` and `adminAuth`
+- `backend/.env` — `GOOGLE_APPLICATION_CREDENTIALS`, `FIREBASE_PROJECT_ID`, `PORT=8080`
+- `backend/Dockerfile` — multi-stage build for Cloud Run
+- `backend/migrations/001_init.sql` — `matches` + `req_matches` tables with indexes
+- `functions/src/index.ts` — `onRequirementWritten` + `onListingWritten` Cloud Function triggers to upsert scores to PostgreSQL
+- `src/services/apiService.ts` — `fetchRankedListings(uid)` + `fetchMatchedBuyers(uid)` with Firebase ID token auth header
+- `DiscoverScreen` — ranked mode: calls API, shows `% MATCH` badge in sage green, "Matched for you" kicker
+- `BrokerDashboardScreen` — Matched tab: replaces mock with live `fetchMatchedBuyers()` data
+- `PostListingScreen` — BHK chip picker (required field) wired to listing doc
+- `src/types/index.ts` — `bhk?: string`, `score?: number` on `Listing`
+- `tsconfig.json` — `exclude: ["backend", "functions"]` to prevent tsc from picking up sub-projects
+- `EXPO_PUBLIC_API_URL` — falls back to Firestore-only mode when unset
+
+---
+
+## Phase 4 — Push Notifications ✅ DONE
+
+**Delivered:**
+- `expo-notifications`, `expo-device`, `expo-constants` installed
+- `app.json` — `expo-notifications` plugin with icon + accent color, Android RECEIVE_BOOT_COMPLETED + VIBRATE permissions
+- `src/services/notificationsService.ts` — `registerForPushNotifications(uid)`: requests permission, gets Expo Push Token, saves to `users/{uid}.fcmToken`; `addNotificationTapListener(onTap)`: foreground notification tap → navigates to chats
+- `App.tsx` — `useEffect` fires on appUser set: calls `registerForPushNotifications`, registers `addNotificationTapListener` to route taps to chats tab
+- `functions/src/index.ts` — `sendExpoPush()` helper (calls `https://exp.host/--/api/v2/push/send`); three new triggers:
+  - `onConnectionCreated` — new pending connection → push to broker
+  - `onConnectionUpdated` — status → accepted → push to buyer
+  - `onMessageSent` — new thread message → push to recipient (respects mute records)
+
+---
+
+## Phase 3 — Matching Engine (Backend) — ARCHIVED
+
+**Goal:** Buyers see listings ranked by how well they match their requirement. Brokers see buyers ranked by match score. Currently the Discover feed shows all Active listings in chronological order — Phase 3 replaces this with scored, ranked results. (Delivered — see above.)
 
 ### Architecture
 

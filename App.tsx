@@ -22,6 +22,7 @@ import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { auth, saveUid, loadStoredUid, clearStoredUid } from './src/services/firebase';
 import { getUserDoc } from './src/services/userService';
 import { sendConnectionRequest } from './src/services/connectionsService';
+import { registerForPushNotifications, addNotificationTapListener } from './src/services/notificationsService';
 
 import { Colors } from './src/theme';
 import BottomNav from './src/components/BottomNav';
@@ -73,6 +74,19 @@ export default function App() {
   const [chatThread, setChatThread] = useState<ChatThread | null>(null);
   const [connectSheet, setConnectSheet] = useState<Listing | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Register push token and wire tap → navigate to chats
+  useEffect(() => {
+    if (!appUser) return;
+    registerForPushNotifications(appUser.uid);
+    const sub = addNotificationTapListener((data) => {
+      if (data.type === 'connection' || data.type === 'message') {
+        setTab('chats');
+        setChatThread(null);
+      }
+    });
+    return () => sub.remove();
+  }, [appUser?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     // On cold start: if Firebase auth is in-memory (lost after kill), try restoring

@@ -5,6 +5,27 @@ import { Pool } from 'pg';
 import { matchScore, formatBudget, formatPostedAt } from '../../backend/src/scoring';
 import type { RequirementDoc, ListingDoc } from '../../backend/src/types';
 
+// ─── Expo push helper ────────────────────────────────────────────────────────
+
+async function getUserToken(uid: string): Promise<string | null> {
+  const snap = await db.collection('users').doc(uid).get();
+  return (snap.data()?.fcmToken as string | undefined) ?? null;
+}
+
+async function sendExpoPush(
+  token: string,
+  title: string,
+  body: string,
+  data: Record<string, string> = {},
+): Promise<void> {
+  if (!token.startsWith('ExponentPushToken')) return;
+  await fetch('https://exp.host/--/api/v2/push/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ to: token, title, body, data, sound: 'default' }),
+  });
+}
+
 if (!getApps().length) initializeApp();
 const db = getFirestore();
 
@@ -89,5 +110,119 @@ export const onListingWritten = onDocumentWritten(
     );
 
     console.log(`Scored listing ${listing.id} against ${requirements.length} requirements`);
+  },
+);
+
+// ─── Notification triggers ───────────────────────────────────────────────────
+
+/**
+ * New connection request (status: pending) → push to broker.
+ */
+export const onConnectionCreated = onDocumentWritten(
+  'connections/{connId}',
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+    if (!after?.exists || before?.exists) return; // only fire on create
+
+    const conn = after.data() as {
+      brokerUid: string;
+      buyerName: string;
+      listingTitle: string;
+      status: string;
+    };
+    if (conn.status !== 'pending') return;
+
+    const token = await getUserToken(conn.brokerUid);
+    if (!token) return;
+
+    await sendExpoPush(
+      token,
+      'New connection request',
+      `${conn.buyerName} is interested in ${conn.listingTitle}`,
+      { type: 'connection', connId: after.id },
+    );
+  },
+);
+
+/**
+ * Connection accepted → push to buyer.
+ */
+export const onConnectionUpdated = onDocumentWritten(
+  'connections/{connId}',
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+    if (!before?.exists || !after?.exists) return; // only fire on update
+
+    const prev = before.data() as { status: string };
+    const curr = after.data() as {
+      buyerUid: string;
+      brokerName: string;
+      status: string;
+    };
+    if (prev.status === curr.status || curr.status !== 'accepted') return;
+
+    const token = await getUserToken(curr.buyerUid);
+    if (!token) return;
+
+    await sendExpoPush(
+      token,
+      'Request accepted',
+      `${curr.brokerName} accepted your connection request`,
+      { type: 'connection', connId: after.id },
+    );
+  },
+);
+
+/**
+ * New chat message → push to the other party.
+ */
+export const onMessageSent = onDocumentWritten(
+  'connections/{connId}/thread/{msgId}',
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+    if (!after?.exists || before?.exists) return; // only on new message
+
+    const msg = after.data() as { senderUid: string; text: string };
+    const connId = event.params.connId;
+
+    const connSnap = await db.collection('connections').doc(connId).get();
+    if (!connSnap.exists) return;
+
+    const conn = connSnap.data() as {
+      buyerUid: string;
+      buyerName: string;
+      brokerUid: string;
+      brokerName: string;
+    };
+
+    const recipientUid =
+      msg.senderUid === conn.buyerUid ? conn.brokerUid : conn.buyerUid;
+    const senderName =
+      msg.senderUid === conn.buyerUid ? conn.buyerName : conn.brokerName;
+
+    // Check mute — buyer can mute broker
+    if (msg.senderUid === conn.brokerUid) {
+      const muteSnap = await db
+        .collection('mutes')
+        .doc(conn.buyerUid)
+        .collection('brokers')
+        .doc(conn.brokerUid)
+        .get();
+      if (muteSnap.exists) return;
+    }
+
+    const token = await getUserToken(recipientUid);
+    if (!token) return;
+
+    const preview = msg.text.length > 60 ? msg.text.slice(0, 57) + '…' : msg.text;
+    await sendExpoPush(
+      token,
+      senderName,
+      preview,
+      { type: 'message', connId },
+    );
   },
 );

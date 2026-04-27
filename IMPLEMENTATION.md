@@ -1,7 +1,7 @@
 # PropMatch Mobile — Implementation Log
 
-> Last updated: 2026-04-26
-> Status: Phase 2 complete — full Firestore data layer live, all mock data removed
+> Last updated: 2026-04-27
+> Status: Phase 4 complete — push notifications, matching engine backend, full Firestore data layer
 
 ---
 
@@ -18,10 +18,10 @@
 | Auth | Firebase Auth (email/password via Firebase JS SDK) | ^12.12.1 |
 | Database | Firestore (live — all screens wired) | ^12.12.1 |
 | Session persistence | @react-native-async-storage/async-storage | ~2.1.2 |
-| Backend (planned) | Node.js + Express on Cloud Run | — |
-| Database (planned) | PostgreSQL on Cloud SQL (match scores) | — |
+| Backend | Node.js + Express on Cloud Run | — |
+| Database | PostgreSQL on Cloud SQL (match scores) | — |
 | Storage (planned) | Google Cloud Storage | — |
-| Push notifications (planned) | Firebase Cloud Messaging | — |
+| Push notifications | Expo Push Service (expo-notifications) | ~0.31.0 |
 | Repo | https://github.com/KedarG63/PropMatch | branch: master |
 
 ---
@@ -171,6 +171,56 @@ propmatch-mobile/
 - `subscribeChatThread(connId, myUid, callback)` — onSnapshot on `connections/{connId}/thread`, ordered by `sentAt`
 - `sendTextMessage(connId, senderUid, text)` — writes to thread subcollection
 
+### `notificationsService.ts`
+- `registerForPushNotifications(uid)` — requests permission, gets Expo Push Token via `expo-notifications`, writes token to `users/{uid}.fcmToken`; no-ops in simulator
+- `addNotificationTapListener(onTap)` — subscribes to notification tap events; `onTap` receives `data` payload; returns subscription for cleanup
+
+### `apiService.ts`
+- `fetchRankedListings(uid)` → `Listing[] | null` — calls `GET /matches/buyer/{uid}` with Firebase ID token header; returns null when `EXPO_PUBLIC_API_URL` not set
+- `fetchMatchedBuyers(uid)` → `MatchedBuyer[] | null` — calls `GET /matches/broker/{uid}`
+
+---
+
+## Backend (`backend/`)
+
+### `backend/src/index.ts`
+Express server — `/health` GET, mounts `/matches` router, `cors` + `dotenv` config, listens on `PORT` (default 8080)
+
+### `backend/src/auth.ts`
+`requireAuth` middleware — extracts `Authorization: Bearer <token>`, verifies via `adminAuth.verifyIdToken()`, sets `req.uid`
+
+### `backend/src/firebase.ts`
+Initialises Firebase Admin (`applicationDefault()` credential), exports `db` (Admin Firestore) and `adminAuth`
+
+### `backend/src/scoring.ts`
+- `matchScore(req, listing)` — pure function, returns 0–100
+- `priceToLakhs(price)` — parses "₹1.38 Cr" → 138, "₹85 L" → 85
+- `formatBudget(min, max)` and `formatPostedAt(ts)` — display helpers
+
+### `backend/src/routes/matches.ts`
+- `GET /matches/buyer/:uid` — fetches buyer's active requirement from Firestore, scores all active listings, returns ranked array (score ≥ 40) as `{ listings: Listing[] }`
+- `GET /matches/broker/:uid` — fetches broker's listings, scores vs all active requirements, returns `{ buyers: MatchedBuyer[] }`
+
+### `backend/migrations/001_init.sql`
+- `matches` table: `(buyer_uid, listing_id, score)` with `UNIQUE(buyer_uid, listing_id)`, index on `(buyer_uid, score DESC)`
+- `req_matches` table: `(broker_uid, req_id, listing_id, score)`
+
+---
+
+## Cloud Functions (`functions/src/index.ts`)
+
+### Scoring triggers
+- `onRequirementWritten` — triggers on `requirements/{reqId}` write → scores vs all active listings → upserts to `matches` + `req_matches` tables
+- `onListingWritten` — triggers on `listings/{listingId}` write → scores vs all active requirements → upserts to PostgreSQL
+
+### Notification triggers
+- `onConnectionCreated` — triggers on new `connections/{connId}` doc (status: pending) → pushes to broker: "A buyer is interested in {listing}"
+- `onConnectionUpdated` — triggers on connection status change → accepted → pushes to buyer: "{broker} accepted your request"
+- `onMessageSent` — triggers on new `connections/{connId}/thread/{msgId}` doc → pushes preview to recipient; respects `mutes/{buyerUid}/brokers/{brokerUid}` — skips if muted
+
+### `sendExpoPush(token, title, body, data)`
+Calls `https://exp.host/--/api/v2/push/send` with JSON payload. No-ops if token is not an Expo push token.
+
 ---
 
 ## Auth Flow (`App.tsx`)
@@ -237,6 +287,33 @@ All authenticated screens receive `appUser: AppUser`. Role-based routing:
 
 ---
 
+## File Structure (updated)
+
+```
+propmatch-mobile/
+├── App.tsx                          ← root shell, auth, push notification wiring
+├── app.json                         ← expo-notifications plugin, Android permissions
+├── backend/
+│   ├── src/
+│   │   ├── index.ts                 ← Express app entry
+│   │   ├── auth.ts                  ← requireAuth middleware
+│   │   ├── firebase.ts              ← Admin SDK init
+│   │   ├── scoring.ts               ← matchScore(), priceToLakhs()
+│   │   ├── types.ts                 ← RequirementDoc, ListingDoc interfaces
+│   │   └── routes/matches.ts        ← /matches/buyer/:uid, /matches/broker/:uid
+│   ├── migrations/001_init.sql      ← matches + req_matches tables
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── .env                         ← GOOGLE_APPLICATION_CREDENTIALS, PORT
+├── functions/
+│   └── src/index.ts                 ← 5 Cloud Function triggers (scoring + notifications)
+└── src/
+    └── services/
+        ├── apiService.ts            ← fetchRankedListings(), fetchMatchedBuyers()
+        └── notificationsService.ts  ← registerForPushNotifications(), addNotificationTapListener()
+```
+
 ## Git History (key commits)
 
 1. `init: scaffold Expo SDK 55 project with editorial design system`
@@ -245,3 +322,5 @@ All authenticated screens receive `appUser: AppUser`. Role-based routing:
 4. `feat: Phase 1 — Firebase Auth (email/password, session persistence)`
 5. `feat: Phase 2 — replace all mock data with live Firestore`
 6. `fix: remove composite index queries to avoid Firestore index errors`
+7. `feat: Phase 3 — matching engine backend, Cloud Functions, mobile wiring`
+8. `feat: Phase 4 — push notifications via Expo Push Service`
