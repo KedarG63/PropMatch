@@ -14,7 +14,7 @@
 | 2 | Firestore data layer (listings, requirements, visits, connections, chat) | ✅ Done |
 | 3 | Matching engine (Node.js backend + PostgreSQL) | ✅ Done |
 | 4 | Push notifications (FCM) | ✅ Done |
-| 5 | Media (photos, video) via GCS | After Phase 4 |
+| 5 | Media (photos) via Firebase Storage | ✅ Done |
 | 6 | Anti-spam enforcement (mute, rate limit, verification) | After Phase 5 |
 | 7 | Polish, onboarding flow, app store submission | Final |
 
@@ -268,7 +268,34 @@ POST /verify/broker               → broker RERA verification request (Phase 6)
 
 ---
 
-## Phase 5 — Media (Photos & Video)
+## Phase 5 — Media (Photos) ✅ DONE
+
+**Delivered:**
+- `expo-image-picker` installed + plugin in `app.json` with photos permission string
+- `src/services/storageService.ts` — `uploadListingPhotos(listingId, uris[])`: fetches each local URI as a blob, uploads to `listings/{listingId}/photo_{i}.jpg` in Firebase Storage, returns array of download URLs
+- `src/services/firebase.ts` — exports `storage` (Firebase Storage instance)
+- `src/services/listingsService.ts` — `photos` field mapped as `string[]` URLs from Firestore; `updateListingPhotos()` helper to patch the doc after upload; `NewListing.photos?` optional
+- `src/types/index.ts` — `Listing.photos: string[]` (was `number`)
+- `PostListingScreen` — photo zone taps `launchImageLibraryAsync()` (multi-select, up to 5); thumbnail strip with ✕ per photo + add-more tile; upload progress label during submit; two-step post: create doc → upload photos → patch URLs
+- `PropertyPhoto` — accepts `photos?: string[]`; when photos present: horizontal paging `ScrollView` with `Image` per photo, synced dot indicator via `onMomentumScrollEnd`; gradient building art shown as fallback when no photos
+- `DiscoverScreen` — passes `photos={l.photos}` to `PropertyPhoto`; removed static dots (now managed inside `PropertyPhoto`)
+
+**Firebase Storage rules to set:**
+```
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /listings/{listingId}/{file} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+  }
+}
+```
+
+---
+
+## Phase 5 — Media (Photos & Video) — ARCHIVED
 
 **Goal:** Brokers upload real listing photos/videos; buyers see them.
 

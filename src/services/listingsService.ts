@@ -32,6 +32,7 @@ export interface NewListing {
   facing: string;
   brokerName: string;
   brokerFirm: string;
+  photos?: string[];
 }
 
 export async function postListing(uid: string, data: NewListing): Promise<string> {
@@ -90,7 +91,7 @@ export async function getDiscoverListings(
         uid: String(data.uid ?? ''),
         tone: toneFromId(d.id),
         idx: idxFromId(d.id),
-        photos: (data.photos as unknown[])?.length ?? 0,
+        photos: Array.isArray(data.photos) ? (data.photos as string[]) : [],
         video: !!data.videoUrl,
         title: String(data.title ?? ''),
         price: String(data.price ?? ''),
@@ -111,4 +112,8 @@ export async function updateListingStatus(
   status: 'Active' | 'Paused' | 'Sold',
 ): Promise<void> {
   await updateDoc(doc(db, COL, id), { status });
+}
+
+export async function updateListingPhotos(id: string, photos: string[]): Promise<void> {
+  await updateDoc(doc(db, COL, id), { photos });
 }

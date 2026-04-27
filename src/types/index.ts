@@ -34,7 +34,7 @@ export interface Listing {
   uid: string;          // broker's Firebase uid
   tone: PropertyTone;
   idx: number;
-  photos: number;
+  photos: string[];     // Firebase Storage download URLs
   video: boolean;
   badge?: string;
   title: string;

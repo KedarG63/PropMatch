@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeAuth, getAuth, inMemoryPersistence, type Auth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
@@ -24,8 +25,9 @@ try {
   auth = getAuth(app);
 }
 
-export { auth };
+export { auth, app };
 export const db = getFirestore(app);
+export const storage = getStorage(app);
 
 // Key used by App.tsx to persist the signed-in user's UID across cold starts
 export const STORED_UID_KEY = '@propmatch/uid';

@@ -116,7 +116,7 @@ export default function DiscoverScreen({ openConnect, appUser }: Props) {
           <View key={l.id} style={styles.card}>
             {/* Photo zone */}
             <View style={styles.photoContainer}>
-              <PropertyPhoto tone={l.tone} idx={l.idx} height={210} video={l.video} />
+              <PropertyPhoto tone={l.tone} idx={l.idx} height={210} video={l.video} photos={l.photos} />
               {/* Match score badge (ranked mode) */}
               {l.score != null && l.score > 0 && (
                 <View style={[styles.badge, { backgroundColor: Colors.sage }]}>
@@ -134,12 +134,6 @@ export default function DiscoverScreen({ openConnect, appUser }: Props) {
                   </Text>
                 </View>
               )}
-              {/* Photo dots */}
-              <View style={styles.photoDots}>
-                {[...Array(l.photos)].map((_, k) => (
-                  <View key={k} style={[styles.dot, k === 0 && styles.dotActive]} />
-                ))}
-              </View>
               {/* Save button */}
               <TouchableOpacity
                 style={styles.saveBtn}
