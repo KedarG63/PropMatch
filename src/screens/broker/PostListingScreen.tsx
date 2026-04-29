@@ -182,8 +182,10 @@ export default function PostListingScreen({ onPosted, appUser }: Props) {
               }
 
               onPosted();
-            } catch {
-              Alert.alert('Error', 'Could not post listing. Please try again.');
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error('PostListing error:', msg);
+              Alert.alert('Error', msg.length < 120 ? msg : 'Could not post listing. Please try again.');
             } finally {
               setPosting(false);
               setUploadProgress('');
