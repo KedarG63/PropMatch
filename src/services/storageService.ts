@@ -1,17 +1,6 @@
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import * as FileSystem from 'expo-file-system';
+import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { storage } from './firebase';
-
-// fetch() does not handle file:// URIs in React Native — XHR does
-function localUriToBlob(uri: string): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.responseType = 'blob';
-    xhr.onload = () => resolve(xhr.response as Blob);
-    xhr.onerror = () => reject(new Error(`Failed to read file: ${uri}`));
-    xhr.open('GET', uri, true);
-    xhr.send(null);
-  });
-}
 
 export async function uploadListingPhotos(
   listingId: string,
@@ -19,9 +8,12 @@ export async function uploadListingPhotos(
 ): Promise<string[]> {
   const urls = await Promise.all(
     uris.map(async (uri, i) => {
-      const blob = await localUriToBlob(uri);
+      // Read as base64 — works with Expo Go's sandboxed file:// cache URIs
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
       const storageRef = ref(storage, `listings/${listingId}/photo_${i}.jpg`);
-      await uploadBytes(storageRef, blob);
+      await uploadString(storageRef, base64, 'base64', { contentType: 'image/jpeg' });
       return getDownloadURL(storageRef);
     }),
   );
