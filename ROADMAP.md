@@ -1,7 +1,7 @@
 # PropMatch Mobile — Roadmap
 
-> Last updated: 2026-04-27
-> Current status: Phase 4 complete — push notifications via Expo Push Service
+> Last updated: 2026-05-07
+> Current status: Phase 5 complete — real photo upload and carousel working in Expo Go
 
 ---
 
@@ -15,7 +15,7 @@
 | 3 | Matching engine (Node.js backend + PostgreSQL) | ✅ Done |
 | 4 | Push notifications (FCM) | ✅ Done |
 | 5 | Media (photos) via Firebase Storage | ✅ Done |
-| 6 | Anti-spam enforcement (mute, rate limit, verification) | After Phase 5 |
+| 6 | Anti-spam enforcement (mute, rate limit, verification) | 🔄 Next |
 | 7 | Polish, onboarding flow, app store submission | Final |
 
 ---
@@ -271,14 +271,21 @@ POST /verify/broker               → broker RERA verification request (Phase 6)
 ## Phase 5 — Media (Photos) ✅ DONE
 
 **Delivered:**
-- `expo-image-picker` installed + plugin in `app.json` with photos permission string
-- `src/services/storageService.ts` — `uploadListingPhotos(listingId, uris[])`: fetches each local URI as a blob, uploads to `listings/{listingId}/photo_{i}.jpg` in Firebase Storage, returns array of download URLs
-- `src/services/firebase.ts` — exports `storage` (Firebase Storage instance)
-- `src/services/listingsService.ts` — `photos` field mapped as `string[]` URLs from Firestore; `updateListingPhotos()` helper to patch the doc after upload; `NewListing.photos?` optional
+- `expo-image-picker` + `expo-file-system` installed; image-picker plugin in `app.json`
+- `src/services/storageService.ts` — `uploadListingPhotos(listingId, uris[])`: uses `FileSystem.uploadAsync` (native HTTP) to POST binary directly to Firebase Storage REST API (`uploadType=media`); constructs download URL from response `downloadTokens`; avoids Firebase JS SDK storage entirely (JS SDK Blob/ArrayBuffer support is broken in React Native/Hermes)
+- `src/services/listingsService.ts` — `photos` mapped as `string[]` download URLs from Firestore; `updateListingPhotos()` patches doc after upload; `NewListing.photos?` optional
 - `src/types/index.ts` — `Listing.photos: string[]` (was `number`)
-- `PostListingScreen` — photo zone taps `launchImageLibraryAsync()` (multi-select, up to 5); thumbnail strip with ✕ per photo + add-more tile; upload progress label during submit; two-step post: create doc → upload photos → patch URLs
-- `PropertyPhoto` — accepts `photos?: string[]`; when photos present: horizontal paging `ScrollView` with `Image` per photo, synced dot indicator via `onMomentumScrollEnd`; gradient building art shown as fallback when no photos
-- `DiscoverScreen` — passes `photos={l.photos}` to `PropertyPhoto`; removed static dots (now managed inside `PropertyPhoto`)
+- `PostListingScreen` — photo zone taps `launchImageLibraryAsync()` (multi-select, up to 5); thumbnail strip with ✕ remove + add-more tile; upload progress label; two-step post: create Firestore doc → upload photos via REST → patch URLs into doc
+- `PropertyPhoto` — accepts `photos?: string[]`; horizontal paging `ScrollView` with `Image` per photo + synced dot indicator (`onMomentumScrollEnd`); gradient building art as fallback when no photos; dots rendered inside component
+- `DiscoverScreen` — passes `photos={l.photos}` to `PropertyPhoto`; static dots removed
+
+**Known Expo Go constraints resolved during this phase:**
+- `fetch(file://uri)` → Network request failed (Expo Go sandbox)
+- `XMLHttpRequest` on file:// → same sandbox restriction
+- `FileSystem.readAsStringAsync` + `uploadString('base64')` → Hermes `Blob from ArrayBuffer` not supported
+- `FileSystem.EncodingType.Base64` → enum undefined at runtime → use string `'base64'`
+- `readAsStringAsync` from `expo-file-system` → deprecated in SDK 55 → import from `expo-file-system/legacy`
+- **Final working approach:** `FileSystem.uploadAsync` (native HTTP client, reads sandboxed files) + Firebase Storage REST API
 
 **Firebase Storage rules to set:**
 ```

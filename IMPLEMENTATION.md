@@ -1,7 +1,7 @@
 # PropMatch Mobile — Implementation Log
 
-> Last updated: 2026-04-27
-> Status: Phase 4 complete — push notifications, matching engine backend, full Firestore data layer
+> Last updated: 2026-05-07
+> Status: Phase 5 complete — real photo upload + carousel live in Expo Go
 
 ---
 
@@ -20,7 +20,9 @@
 | Session persistence | @react-native-async-storage/async-storage | ~2.1.2 |
 | Backend | Node.js + Express on Cloud Run | — |
 | Database | PostgreSQL on Cloud SQL (match scores) | — |
-| Storage (planned) | Google Cloud Storage | — |
+| Storage | Firebase Storage via REST API (FileSystem.uploadAsync) | ~55.0.0 |
+| File system | expo-file-system/legacy (uploadAsync) | ~18.0.0 |
+| Image picker | expo-image-picker | ~55.0.19 |
 | Push notifications | Expo Push Service (expo-notifications) | ~0.31.0 |
 | Repo | https://github.com/KedarG63/PropMatch | branch: master |
 
@@ -179,6 +181,14 @@ propmatch-mobile/
 - `fetchRankedListings(uid)` → `Listing[] | null` — calls `GET /matches/buyer/{uid}` with Firebase ID token header; returns null when `EXPO_PUBLIC_API_URL` not set
 - `fetchMatchedBuyers(uid)` → `MatchedBuyer[] | null` — calls `GET /matches/broker/{uid}`
 
+### `storageService.ts`
+- `uploadListingPhotos(listingId, uris[])` → `string[]` of Firebase Storage download URLs
+- Uses `FileSystem.uploadAsync` (from `expo-file-system/legacy`) with `BINARY_CONTENT` upload type — sends raw bytes via native HTTP, bypassing all JS Blob/ArrayBuffer limitations in Hermes
+- Uploads to Firebase Storage REST API: `POST /v0/b/{bucket}/o?uploadType=media&name={path}`
+- Auth via Firebase ID token (`auth.currentUser.getIdToken()`) in `Authorization: Bearer` header
+- Constructs download URL from `downloadTokens` in the JSON response
+- **Why not Firebase JS SDK storage:** `uploadString('base64')` and `uploadBytes()` both internally create `Blob` from `Uint8Array`, which Hermes does not support (`Creating blobs from ArrayBufferView not supported`)
+
 ---
 
 ## Backend (`backend/`)
@@ -248,9 +258,11 @@ All authenticated screens receive `appUser: AppUser`. Role-based routing:
 ## Components
 
 ### `PropertyPhoto`
-- Gradient architectural building placeholder (no real images in Phase 2)
-- `tone` (`'a'–'e'`): sky/building color; `idx` (0–2): silhouette layout
-- `toneFromId` / `idxFromId` hash functions in service files ensure same doc ID → same gradient always
+- `photos?: string[]` prop — when present, shows horizontal paging `ScrollView` carousel with one `Image` per photo
+- `onMomentumScrollEnd` syncs active dot index; dots rendered inside the component (not in parent screen)
+- Gradient architectural building placeholder shown as fallback when `photos` is empty or absent
+- `tone` (`'a'–'e'`): sky/building color; `idx` (0–2): silhouette layout (still used for fallback)
+- `toneFromId` / `idxFromId` hash functions ensure same doc ID → same gradient always
 
 ### `ConnectSheet`
 - `onSend: (message: string) => Promise<void>` — async, shows `ActivityIndicator` while in flight
@@ -309,9 +321,15 @@ propmatch-mobile/
 ├── functions/
 │   └── src/index.ts                 ← 5 Cloud Function triggers (scoring + notifications)
 └── src/
-    └── services/
-        ├── apiService.ts            ← fetchRankedListings(), fetchMatchedBuyers()
-        └── notificationsService.ts  ← registerForPushNotifications(), addNotificationTapListener()
+    ├── components/
+    │   └── PropertyPhoto.tsx         ← real image carousel + gradient fallback
+    ├── services/
+    │   ├── apiService.ts             ← fetchRankedListings(), fetchMatchedBuyers()
+    │   ├── notificationsService.ts   ← registerForPushNotifications(), addNotificationTapListener()
+    │   ├── storageService.ts         ← uploadListingPhotos() via FileSystem.uploadAsync + REST API
+    │   └── listingsService.ts        ← photos: string[] mapping, updateListingPhotos()
+    └── screens/
+        └── broker/PostListingScreen.tsx ← photo picker, thumbnail strip, upload flow
 ```
 
 ## Git History (key commits)
@@ -324,3 +342,5 @@ propmatch-mobile/
 6. `fix: remove composite index queries to avoid Firestore index errors`
 7. `feat: Phase 3 — matching engine backend, Cloud Functions, mobile wiring`
 8. `feat: Phase 4 — push notifications via Expo Push Service`
+9. `feat: Phase 5 — real photo upload and carousel via Firebase Storage`
+10. `fix: use FileSystem.uploadAsync + REST API for photo uploads (Hermes Blob limitation)`
